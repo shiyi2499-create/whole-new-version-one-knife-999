@@ -21,6 +21,7 @@ import csv
 import sys
 import json
 import argparse
+import re
 import numpy as np
 from collections import defaultdict
 from dataclasses import dataclass
@@ -68,6 +69,15 @@ class Preprocessor:
         self.sensor_data: Optional[np.ndarray] = None  # Nx7 (ts, ax,ay,az, gx,gy,gz)
         self.key_events: list[dict] = []
         self.windows: list[dict] = []  # final windowed samples
+
+    def _infer_group_tag(self, session_id: str) -> str:
+        m_group = re.search(r"_g(\d+)_", session_id)
+        if m_group:
+            return f"g{m_group.group(1)}"
+        m_part = re.search(r"_part(\d+)_", session_id)
+        if m_part:
+            return f"part{m_part.group(1)}"
+        return ""
 
     def load(self):
         """Load raw CSV files into memory."""
@@ -234,6 +244,11 @@ class Preprocessor:
         timestamps = np.array([w["timestamp_ns"] for w in self.windows], dtype=np.int64)
 
         basename = os.path.basename(self.session_prefix)
+        source_dir = os.path.basename(os.path.dirname(self.session_prefix))
+        group_tag = self._infer_group_tag(basename)
+        session_ids = np.array([basename] * len(self.windows))
+        source_dirs = np.array([source_dir] * len(self.windows))
+        group_tags = np.array([group_tag] * len(self.windows))
         out_path = os.path.join(self.output_dir, f"{basename}_dataset.npz")
 
         np.savez_compressed(
@@ -241,6 +256,9 @@ class Preprocessor:
             X=X,
             y=y,
             timestamps=timestamps,
+            session_ids=session_ids,
+            source_dirs=source_dirs,
+            group_tags=group_tags,
             target_rate_hz=self.wcfg.target_rate_hz,
             window_len=target_len,
             channels=["accel_x", "accel_y", "accel_z", "gyro_x", "gyro_y", "gyro_z"],
@@ -400,6 +418,16 @@ def find_sessions_in_rounds(round_dirs: list[str],
     return find_sessions_in_dirs(round_dirs, session_type=session_type)
 
 
+def infer_group_tag(session_id: str) -> str:
+    m_group = re.search(r"_g(\d+)_", session_id)
+    if m_group:
+        return f"g{m_group.group(1)}"
+    m_part = re.search(r"_part(\d+)_", session_id)
+    if m_part:
+        return f"part{m_part.group(1)}"
+    return ""
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Preprocess raw keystroke vibration data"
@@ -459,7 +487,7 @@ def main():
     else:
         sessions = args.session
 
-    all_npz_paths = []
+    all_npz_paths: list[tuple[str, str]] = []
 
     for sess in sessions:
         proc = Preprocessor(session_prefix=sess, window_cfg=wcfg)
@@ -469,7 +497,7 @@ def main():
             f"{os.path.basename(sess)}_dataset.npz"
         )
         if os.path.exists(npz_path):
-            all_npz_paths.append(npz_path)
+            all_npz_paths.append((npz_path, sess))
 
     # If multiple sessions, also merge into one combined dataset
     if len(all_npz_paths) > 1:
@@ -478,21 +506,45 @@ def main():
         print(f"{'='*60}")
 
         X_all, y_all, ts_all = [], [], []
-        for p in all_npz_paths:
+        session_all, source_all, group_all = [], [], []
+        for p, sess in all_npz_paths:
             data = np.load(p, allow_pickle=True)
+            n = len(data["X"])
+            sess_id = os.path.basename(sess)
+            source_dir = os.path.basename(os.path.dirname(sess))
+            group_tag = infer_group_tag(sess_id)
+
             X_all.append(data["X"])
             y_all.append(data["y"])
             ts_all.append(data["timestamps"])
+            if "session_ids" in data.files:
+                session_all.append(data["session_ids"].astype(str))
+            else:
+                session_all.append(np.array([sess_id] * n))
+            if "source_dirs" in data.files:
+                source_all.append(data["source_dirs"].astype(str))
+            else:
+                source_all.append(np.array([source_dir] * n))
+            if "group_tags" in data.files:
+                group_all.append(data["group_tags"].astype(str))
+            else:
+                group_all.append(np.array([group_tag] * n))
             print(f"    + {os.path.basename(p)}: {len(data['X'])} samples")
 
         X_merged = np.concatenate(X_all, axis=0)
         y_merged = np.concatenate(y_all, axis=0)
         ts_merged = np.concatenate(ts_all, axis=0)
+        session_merged = np.concatenate(session_all, axis=0)
+        source_merged = np.concatenate(source_all, axis=0)
+        group_merged = np.concatenate(group_all, axis=0)
 
         merged_path = os.path.join("data/processed", "merged_dataset.npz")
         np.savez_compressed(
             merged_path,
             X=X_merged, y=y_merged, timestamps=ts_merged,
+            session_ids=session_merged,
+            source_dirs=source_merged,
+            group_tags=group_merged,
             target_rate_hz=wcfg.target_rate_hz,
             window_len=wcfg.target_window_len,
             channels=["accel_x", "accel_y", "accel_z",

@@ -26,12 +26,17 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from collections import defaultdict, Counter
+from typing import Optional
 
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import (
+    StratifiedKFold, GroupKFold, GroupShuffleSplit, StratifiedShuffleSplit
+)
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score, confusion_matrix, top_k_accuracy_score
+from sklearn.metrics import (
+    accuracy_score, confusion_matrix, top_k_accuracy_score, f1_score, recall_score
+)
 from sklearn.pipeline import Pipeline
 
 from feature_extractor import (
@@ -95,6 +100,106 @@ try:
     HAS_PLOT = True
 except ImportError:
     HAS_PLOT = False
+
+try:
+    from sklearn.model_selection import StratifiedGroupKFold
+    HAS_STRATIFIED_GROUP = True
+except ImportError:
+    StratifiedGroupKFold = None
+    HAS_STRATIFIED_GROUP = False
+
+
+SEED = 42
+
+
+def _topk_safe(y_true: np.ndarray, probs: np.ndarray, k: int) -> float:
+    n_classes = probs.shape[1]
+    if n_classes < k:
+        return 0.0
+    return float(top_k_accuracy_score(y_true, probs, k=k))
+
+
+def _bootstrap_acc_ci(y_true: np.ndarray, y_pred: np.ndarray,
+                      n_boot: int = 500, seed: int = SEED) -> tuple[float, float]:
+    rng = np.random.default_rng(seed)
+    n = len(y_true)
+    if n == 0:
+        return 0.0, 0.0
+    scores = np.empty(n_boot, dtype=np.float64)
+    idx = np.arange(n)
+    for i in range(n_boot):
+        b = rng.choice(idx, size=n, replace=True)
+        scores[i] = np.mean(y_true[b] == y_pred[b])
+    return float(np.percentile(scores, 2.5)), float(np.percentile(scores, 97.5))
+
+
+def _summary_metrics(y_true: np.ndarray, y_pred: np.ndarray, probs: np.ndarray,
+                     classes: np.ndarray) -> dict:
+    acc = float(accuracy_score(y_true, y_pred))
+    top3 = _topk_safe(y_true, probs, k=3)
+    top5 = _topk_safe(y_true, probs, k=5)
+    macro_f1 = float(f1_score(y_true, y_pred, average="macro", zero_division=0))
+    per_cls = recall_score(
+        y_true, y_pred, labels=np.arange(len(classes)),
+        average=None, zero_division=0
+    )
+    per_key_recall = {str(k): float(v) for k, v in zip(classes.tolist(), per_cls.tolist())}
+    ci_lo, ci_hi = _bootstrap_acc_ci(y_true, y_pred, n_boot=500, seed=SEED)
+    return {
+        "accuracy": acc,
+        "accuracy_ci95": [ci_lo, ci_hi],
+        "top3_accuracy": top3,
+        "top5_accuracy": top5,
+        "macro_f1": macro_f1,
+        "per_key_recall": per_key_recall,
+    }
+
+
+def _get_groups_from_data(data, n_samples: int) -> Optional[np.ndarray]:
+    if "session_ids" in data.files:
+        groups = data["session_ids"].astype(str)
+        if len(groups) == n_samples:
+            return groups
+    return None
+
+
+def _build_outer_splits(y: np.ndarray,
+                        groups: Optional[np.ndarray],
+                        n_splits: int = 5) -> tuple[list[tuple[np.ndarray, np.ndarray]], str]:
+    if groups is not None:
+        uniq = np.unique(groups)
+        if len(uniq) >= n_splits:
+            if HAS_STRATIFIED_GROUP:
+                splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+                splits = list(splitter.split(np.zeros(len(y)), y, groups))
+                return splits, "StratifiedGroupKFold"
+            splitter = GroupKFold(n_splits=n_splits)
+            splits = list(splitter.split(np.zeros(len(y)), y, groups))
+            return splits, "GroupKFold"
+    splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+    splits = list(splitter.split(np.zeros(len(y)), y))
+    return splits, "StratifiedKFold"
+
+
+def _split_train_val(train_idx: np.ndarray, y: np.ndarray,
+                     groups: Optional[np.ndarray], fold: int) -> tuple[np.ndarray, np.ndarray]:
+    rng = np.random.default_rng(SEED + fold)
+    if groups is not None:
+        tr_groups = groups[train_idx]
+        if len(np.unique(tr_groups)) >= 2:
+            gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED + fold)
+            tr_local, vl_local = next(gss.split(np.zeros(len(train_idx)), y[train_idx], tr_groups))
+            return train_idx[tr_local], train_idx[vl_local]
+    # Fallback (legacy datasets without session groups)
+    if len(np.unique(y[train_idx])) > 1:
+        sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED + fold)
+        tr_local, vl_local = next(sss.split(np.zeros(len(train_idx)), y[train_idx]))
+    else:
+        n_val = max(1, int(0.2 * len(train_idx)))
+        perm = rng.permutation(len(train_idx))
+        vl_local = perm[:n_val]
+        tr_local = perm[n_val:]
+    return train_idx[tr_local], train_idx[vl_local]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -167,25 +272,30 @@ class HierarchicalClassifier:
         return key_preds
 
 
-def run_hierarchical(X_feat, y_keys):
+def run_hierarchical(X_feat, y_keys, groups=None):
     print(
         f"\n{'='*60}\n"
         f"  PART A: Hierarchical Classification\n"
         f"{'='*60}"
     )
     results = {}
+    splits, split_mode = _build_outer_splits(y_keys, groups, n_splits=5)
+    print(f"  Split protocol: {split_mode}")
     for zone_type in ["hand", "row", "quadrant"]:
         print(f"\n  ── Hierarchical: zone={zone_type} ──")
-        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
         all_preds = np.array(["?"] * len(y_keys), dtype=object)
         fold_accs = []
 
-        for fold, (train_idx, test_idx) in enumerate(skf.split(X_feat, y_keys)):
+        for fold, (train_idx, test_idx) in enumerate(splits):
             hc = HierarchicalClassifier(zone_type=zone_type)
             hc.fit(X_feat[train_idx], y_keys[train_idx])
             preds = hc.predict(X_feat[test_idx])
             all_preds[test_idx] = preds
-            acc = accuracy_score(y_keys[test_idx], preds[preds != "?"])
+            valid_fold = preds != "?"
+            if valid_fold.any():
+                acc = accuracy_score(y_keys[test_idx][valid_fold], preds[valid_fold])
+            else:
+                acc = 0.0
             fold_accs.append(acc)
 
         valid_mask = all_preds != "?"
@@ -196,6 +306,7 @@ def run_hierarchical(X_feat, y_keys):
             "accuracy": float(overall_acc),
             "fold_mean": float(np.mean(fold_accs)),
             "fold_std": float(np.std(fold_accs)),
+            "split_protocol": split_mode,
         }
     return results
 
@@ -424,7 +535,8 @@ def train_dl_model(model, X_train, y_train, X_val, y_val,
 
 
 def evaluate_dl_model(ModelClass, X_raw, y_keys, model_name,
-                      epochs=200, lr=1e-3, augment=True, patience=40):
+                      epochs=200, lr=1e-3, augment=True, patience=40,
+                      groups=None, outer_splits=None, split_mode=None):
     """
     Evaluate a DL model using 5-fold CV.
     Returns metrics dict, all_preds, all_probs (for ensemble use).
@@ -434,34 +546,44 @@ def evaluate_dl_model(ModelClass, X_raw, y_keys, model_name,
     y_enc = le.transform(y_keys)
     n_classes = len(le.classes_)
 
-    X_norm = X_raw.copy()
-    for ch in range(X_norm.shape[2]):
-        mu = X_norm[:, :, ch].mean()
-        sd = X_norm[:, :, ch].std()
-        if sd > 1e-10:
-            X_norm[:, :, ch] = (X_norm[:, :, ch] - mu) / sd
+    if outer_splits is None:
+        outer_splits, split_mode = _build_outer_splits(y_enc, groups, n_splits=5)
+    elif split_mode is None:
+        split_mode = "precomputed"
 
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
     fold_accs = []
     all_preds = np.zeros(len(y_enc), dtype=int)
     all_probs = np.zeros((len(y_enc), n_classes))
+    n_folds = len(outer_splits)
 
-    for fold, (train_idx, test_idx) in enumerate(skf.split(X_norm, y_enc)):
-        print(f"    Fold {fold+1}/5...")
+    for fold, (train_idx, test_idx) in enumerate(outer_splits):
+        print(f"    Fold {fold+1}/{n_folds}...")
+        train_sub_idx, val_idx = _split_train_val(train_idx, y_enc, groups, fold=fold)
+        if len(train_sub_idx) == 0 or len(val_idx) == 0:
+            train_sub_idx, val_idx = train_idx, test_idx
+
+        # Fit normalization on train subset only to avoid test leakage.
+        mu = X_raw[train_sub_idx].mean(axis=(0, 1), keepdims=True)
+        sd = X_raw[train_sub_idx].std(axis=(0, 1), keepdims=True)
+        sd[sd < 1e-10] = 1.0
+        X_train = (X_raw[train_sub_idx] - mu) / sd
+        X_val = (X_raw[val_idx] - mu) / sd
+        X_test = (X_raw[test_idx] - mu) / sd
+
         model = ModelClass(
-            n_timesteps=X_norm.shape[1],
-            n_channels=X_norm.shape[2],
+            n_timesteps=X_raw.shape[1],
+            n_channels=X_raw.shape[2],
             n_classes=n_classes,
         )
         trained_model, best_val_acc, _ = train_dl_model(
             model,
-            X_norm[train_idx], y_enc[train_idx],
-            X_norm[test_idx], y_enc[test_idx],
+            X_train, y_enc[train_sub_idx],
+            X_val, y_enc[val_idx],
             epochs=epochs, lr=lr, augment=augment, patience=patience,
         )
         trained_model.eval()
         with torch.no_grad():
-            X_test_t = torch.FloatTensor(X_norm[test_idx]).to(DEVICE)
+            X_test_t = torch.FloatTensor(X_test).to(DEVICE)
             out = trained_model(X_test_t)
             probs = torch.softmax(out, dim=1).cpu().numpy()
             preds = out.argmax(dim=1).cpu().numpy()
@@ -472,19 +594,15 @@ def evaluate_dl_model(ModelClass, X_raw, y_keys, model_name,
         fold_accs.append(fold_acc)
         print(f"      → val_acc={best_val_acc:.3f}  test_acc={fold_acc:.3f}")
 
-    overall_acc = accuracy_score(y_enc, all_preds)
-    top3 = top_k_accuracy_score(y_enc, all_probs, k=3) if n_classes >= 3 else 0
-    top5 = top_k_accuracy_score(y_enc, all_probs, k=5) if n_classes >= 5 else 0
-
+    summary = _summary_metrics(y_enc, all_preds, all_probs, le.classes_)
     metrics = {
         "model": model_name,
-        "accuracy": float(overall_acc),
-        "top3_accuracy": float(top3),
-        "top5_accuracy": float(top5),
+        **summary,
         "fold_mean": float(np.mean(fold_accs)),
         "fold_std": float(np.std(fold_accs)),
         "fold_accuracies": [float(a) for a in fold_accs],
         "label_classes": le.classes_.tolist(),
+        "split_protocol": split_mode,
     }
 
     if HAS_PLOT:
@@ -496,7 +614,10 @@ def evaluate_dl_model(ModelClass, X_raw, y_keys, model_name,
                     ax=ax, vmin=0, vmax=1, annot_kws={"size": 6})
         ax.set_xlabel("Predicted")
         ax.set_ylabel("True")
-        ax.set_title(f"{model_name}\nAccuracy: {overall_acc:.1%}  Top-3: {top3:.1%}")
+        ax.set_title(
+            f"{model_name}\nAccuracy: {summary['accuracy']:.1%}  "
+            f"Top-3: {summary['top3_accuracy']:.1%}"
+        )
         plt.tight_layout()
         path = f"results/confusion_{model_name}.png"
         plt.savefig(path, dpi=150)
@@ -510,7 +631,7 @@ def evaluate_dl_model(ModelClass, X_raw, y_keys, model_name,
 #  PART C: ENSEMBLE  (XGBoost + Transformer)
 # ══════════════════════════════════════════════════════════════
 
-def run_xgb_cv(X_feat, y_keys, le):
+def run_xgb_cv(X_feat, y_keys, le, outer_splits=None, groups=None, split_mode=None):
     """
     Run XGBoost 5-fold CV on feature matrix.
     Returns (all_probs, overall_acc) using the same label encoder as Transformer.
@@ -531,11 +652,15 @@ def run_xgb_cv(X_feat, y_keys, le):
         ("clf", xgb_model),
     ])
 
-    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    if outer_splits is None:
+        outer_splits, split_mode = _build_outer_splits(y_enc, groups, n_splits=5)
+    elif split_mode is None:
+        split_mode = "precomputed"
+
     all_probs = np.zeros((len(y_enc), n_classes))
     all_preds = np.zeros(len(y_enc), dtype=int)
 
-    for fold, (train_idx, test_idx) in enumerate(skf.split(X_feat, y_enc)):
+    for fold, (train_idx, test_idx) in enumerate(outer_splits):
         pipe.fit(X_feat[train_idx], y_enc[train_idx])
         probs = pipe.predict_proba(X_feat[test_idx])
         # Map columns to le's class order (XGB may reorder internally)
@@ -546,8 +671,9 @@ def run_xgb_cv(X_feat, y_keys, le):
         all_probs[test_idx] = prob_aligned
         all_preds[test_idx] = prob_aligned.argmax(axis=1)
 
-    overall_acc = accuracy_score(y_enc, all_preds)
-    return all_probs, overall_acc
+    metrics = _summary_metrics(y_enc, all_preds, all_probs, le.classes_)
+    metrics["split_protocol"] = split_mode
+    return all_probs, metrics
 
 
 def run_ensemble(X_feat, y_keys, le,
@@ -569,8 +695,6 @@ def run_ensemble(X_feat, y_keys, le,
     )
 
     y_enc = le.transform(y_keys)
-    n_classes = len(le.classes_)
-
     results = {}
 
     # ── Accuracy-proportional weights ────────────────────────
@@ -578,13 +702,16 @@ def run_ensemble(X_feat, y_keys, le,
     w_tf  = tf_acc  / total
     w_xgb = xgb_acc / total
     probs_prop = w_tf * tf_probs + w_xgb * xgb_probs
-    acc_prop = accuracy_score(y_enc, probs_prop.argmax(axis=1))
-    top3_prop = top_k_accuracy_score(y_enc, probs_prop, k=3)
+    pred_prop = probs_prop.argmax(axis=1)
+    summary_prop = _summary_metrics(y_enc, pred_prop, probs_prop, le.classes_)
     print(f"\n  Accuracy-proportional weights "
           f"(Transformer={w_tf:.2f}, XGBoost={w_xgb:.2f}):")
-    print(f"    Accuracy: {acc_prop:.1%}  Top-3: {top3_prop:.1%}")
-    results["ensemble_prop"] = {"accuracy": acc_prop, "top3_accuracy": top3_prop,
-                                 "w_tf": w_tf, "w_xgb": w_xgb}
+    print(f"    Accuracy: {summary_prop['accuracy']:.1%}  "
+          f"Top-3: {summary_prop['top3_accuracy']:.1%}")
+    results["ensemble_prop"] = {
+        **summary_prop,
+        "w_tf": float(w_tf), "w_xgb": float(w_xgb)
+    }
 
     # ── Grid search over weights ──────────────────────────────
     best_acc = 0.0
@@ -594,23 +721,23 @@ def run_ensemble(X_feat, y_keys, le,
         w = round(w, 1)
         probs_g = w * tf_probs + (1 - w) * xgb_probs
         acc_g = accuracy_score(y_enc, probs_g.argmax(axis=1))
-        top3_g = top_k_accuracy_score(y_enc, probs_g, k=3)
+        top3_g = _topk_safe(y_enc, probs_g, k=3)
         print(f"    w_tf={w:.1f}  acc={acc_g:.1%}  top3={top3_g:.1%}")
         if acc_g > best_acc:
             best_acc = acc_g
             best_w = (w, 1 - w)
 
     best_probs = best_w[0] * tf_probs + best_w[1] * xgb_probs
-    best_top3 = top_k_accuracy_score(y_enc, best_probs, k=3)
-    best_top5 = top_k_accuracy_score(y_enc, best_probs, k=5)
+    best_preds = best_probs.argmax(axis=1)
+    best_summary = _summary_metrics(y_enc, best_preds, best_probs, le.classes_)
 
     print(f"\n  🏆 Best ensemble: w_tf={best_w[0]:.1f}  "
-          f"acc={best_acc:.1%}  top3={best_top3:.1%}  top5={best_top5:.1%}")
+          f"acc={best_summary['accuracy']:.1%}  "
+          f"top3={best_summary['top3_accuracy']:.1%}  "
+          f"top5={best_summary['top5_accuracy']:.1%}")
 
     results["ensemble_best"] = {
-        "accuracy": float(best_acc),
-        "top3_accuracy": float(best_top3),
-        "top5_accuracy": float(best_top5),
+        **best_summary,
         "w_tf": float(best_w[0]),
         "w_xgb": float(best_w[1]),
     }
@@ -634,6 +761,11 @@ def run_ensemble(X_feat, y_keys, le,
 
 def main():
     os.makedirs("results", exist_ok=True)
+    np.random.seed(SEED)
+    if HAS_TORCH:
+        torch.manual_seed(SEED)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(SEED)
 
     print(
         f"\n{'='*60}\n"
@@ -646,7 +778,11 @@ def main():
     data = np.load("data/processed/merged_dataset.npz", allow_pickle=True)
     X_raw = data["X"].astype(np.float32)
     y_keys = data["y"]
-    rate = int(data.get("target_rate_hz", 130))
+    rate = int(data.get("target_rate_hz", 190))
+    groups = _get_groups_from_data(data, len(y_keys))
+    if groups is None:
+        print("  ⚠ merged_dataset.npz has no session_ids; fallback to sample-level stratified split.")
+        print("    Re-run preprocessor to enable group-wise leakage-safe evaluation.")
 
     # 过滤掉采集时误触的杂类（样本数 < 10 的键，如 capslock 等）
     key_counts = Counter(y_keys.tolist())
@@ -656,7 +792,12 @@ def main():
         print(f"  ⚠ 过滤低样本键: {removed} (各 {[key_counts[k] for k in removed]} 次)")
     mask = np.array([k in valid_keys for k in y_keys])
     X_raw, y_keys = X_raw[mask], y_keys[mask]
+    if groups is not None:
+        groups = groups[mask]
     print(f"\n  Data: {X_raw.shape}, {len(valid_keys)} classes, {rate}Hz")
+    split_preview, split_mode = _build_outer_splits(y_keys, groups, n_splits=5)
+    uniq_groups = len(np.unique(groups)) if groups is not None else 0
+    print(f"  Split protocol: {split_mode}  (groups={uniq_groups})")
 
     # ── Load or extract features (for hierarchical + ensemble) ─
     feat_path = "results/features.npz"
@@ -664,8 +805,12 @@ def main():
         print(f"  Loading cached features from {feat_path}")
         fdata = np.load(feat_path, allow_pickle=True)
         X_feat = fdata["X"]
-        # Invalidate cache if shapes don't match (e.g. after adding new data)
-        if X_feat.shape[0] != len(y_keys):
+        cache_ok = X_feat.shape[0] == len(y_keys)
+        if cache_ok and "y" in fdata.files:
+            cache_ok = np.array_equal(fdata["y"], y_keys)
+        if cache_ok and groups is not None and "session_ids" in fdata.files:
+            cache_ok = np.array_equal(fdata["session_ids"].astype(str), groups.astype(str))
+        if not cache_ok:
             print("  ⚠ Cache mismatch — re-extracting features...")
             X_feat = None
     else:
@@ -675,8 +820,10 @@ def main():
         print("  Extracting features...")
         X_feat = extract_features_batch(X_raw, sample_rate=rate)
         X_feat = np.nan_to_num(X_feat, nan=0.0, posinf=0.0, neginf=0.0)
-        np.savez_compressed(feat_path, X=X_feat, y=y_keys,
-                            feature_names=get_feature_names())
+        payload = {"X": X_feat, "y": y_keys, "feature_names": get_feature_names()}
+        if groups is not None:
+            payload["session_ids"] = groups
+        np.savez_compressed(feat_path, **payload)
         print(f"  Features saved → {feat_path}")
 
     all_results = {}
@@ -684,7 +831,7 @@ def main():
     # ══════════════════════════════════════════════════════════
     #  PART A: Hierarchical
     # ══════════════════════════════════════════════════════════
-    hier_results = run_hierarchical(X_feat, y_keys)
+    hier_results = run_hierarchical(X_feat, y_keys, groups=groups)
     all_results.update(hier_results)
 
     # ══════════════════════════════════════════════════════════
@@ -715,12 +862,15 @@ def main():
             metrics, preds, probs, le = evaluate_dl_model(
                 ModelClass, X_raw, y_keys, model_name,
                 epochs=epochs, lr=lr, augment=True, patience=pat,
+                groups=groups, outer_splits=split_preview, split_mode=split_mode,
             )
             elapsed = time.time() - t0
 
             print(f"    Accuracy:     {metrics['accuracy']:.1%}")
+            print(f"    Acc CI95:     [{metrics['accuracy_ci95'][0]:.1%}, {metrics['accuracy_ci95'][1]:.1%}]")
             print(f"    Top-3:        {metrics['top3_accuracy']:.1%}")
             print(f"    Top-5:        {metrics['top5_accuracy']:.1%}")
+            print(f"    Macro-F1:     {metrics['macro_f1']:.3f}")
             print(f"    Folds:        {[f'{a:.3f}' for a in metrics['fold_accuracies']]}")
             print(f"    Mean±Std:     {metrics['fold_mean']:.3f} ± {metrics['fold_std']:.3f}")
             print(f"    Time:         {elapsed:.0f}s")
@@ -749,6 +899,7 @@ def main():
         metrics_noaug, _, _, _ = evaluate_dl_model(
             Conv1DClassifier, X_raw, y_keys, "1D_CNN_no_aug",
             epochs=200, lr=1e-3, augment=False,
+            groups=groups, outer_splits=split_preview, split_mode=split_mode,
         )
         print(f"    Accuracy (no aug): {metrics_noaug['accuracy']:.1%}")
         print(f"    Accuracy (w/ aug): {all_results.get('dl_1D_CNN', {}).get('accuracy', 0):.1%}")
@@ -760,7 +911,11 @@ def main():
     if HAS_XGB and tf_probs_global is not None and le_global is not None:
         print(f"\n  Running XGBoost CV for ensemble...")
         t0 = time.time()
-        xgb_probs, xgb_acc = run_xgb_cv(X_feat, y_keys, le_global)
+        xgb_probs, xgb_metrics = run_xgb_cv(
+            X_feat, y_keys, le_global,
+            outer_splits=split_preview, groups=groups, split_mode=split_mode,
+        )
+        xgb_acc = xgb_metrics["accuracy"]
         print(f"    XGBoost CV accuracy: {xgb_acc:.1%}  ({time.time()-t0:.0f}s)")
 
         tf_acc = all_results["dl_Transformer"]["accuracy"]
@@ -770,7 +925,7 @@ def main():
             xgb_probs, xgb_acc,
         )
         all_results.update(ensemble_results)
-        all_results["xgb_standalone"] = {"accuracy": float(xgb_acc)}
+        all_results["xgb_standalone"] = xgb_metrics
     else:
         if not HAS_XGB:
             print("\n  ⚠ Skipping ensemble (xgboost not installed)")
@@ -806,6 +961,8 @@ def main():
             line += f"  top3={v['top3_accuracy']:.1%}"
         if v.get("top5_accuracy", 0) > 0:
             line += f"  top5={v['top5_accuracy']:.1%}"
+        if "macro_f1" in v:
+            line += f"  macro_f1={v['macro_f1']:.3f}"
         print(line)
 
     # Best model
