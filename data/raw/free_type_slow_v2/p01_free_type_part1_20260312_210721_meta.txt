@@ -1,0 +1,17 @@
+Session: p01_free_type_part1_20260312_210721
+Mode: free_type
+Round: 1
+Free type part: 1/16
+Participant: p01
+Start: 2026-03-12T21:07:21.481161
+End: 2026-03-12T21:14:33.781019
+Duration: 432.3s
+Total sensor samples: 86375
+Total key events: 1220
+Rate drop detected: False
+Session valid: True
+Sampling rate - min: 103.5 Hz
+Sampling rate - max: 209.4 Hz
+Sampling rate - avg: 199.6 Hz
+Sensor CSV: data/raw/free_type_slow_v2/p01_free_type_part1_20260312_210721_sensor.csv
+Events CSV: data/raw/free_type_slow_v2/p01_free_type_part1_20260312_210721_events.csv

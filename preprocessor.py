@@ -26,6 +26,12 @@ import numpy as np
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional
+try:
+    from scipy.signal import resample
+except ImportError as e:
+    raise ImportError(
+        "scipy is required for FFT-based resampling. Install with: pip install scipy"
+    ) from e
 
 
 @dataclass
@@ -126,7 +132,7 @@ class Preprocessor:
                         target_len: int) -> np.ndarray:
         """
         Resample a variable-length window to exactly target_len samples
-        using linear interpolation on the original timestamps.
+        using FFT-domain resampling (scipy.signal.resample).
 
         Regardless of whether a window has 35 or 45 raw samples, the output
         is always (target_len, 6) at a uniform time grid.
@@ -143,16 +149,16 @@ class Preprocessor:
         if n < 2:
             return np.zeros((target_len, values.shape[1]), dtype=np.float64)
 
-        t_start = timestamps_ns[0]
-        t_end = timestamps_ns[-1]
-        uniform_t = np.linspace(t_start, t_end, target_len)
-
-        n_channels = values.shape[1]
-        resampled = np.zeros((target_len, n_channels), dtype=np.float64)
-        for ch in range(n_channels):
-            resampled[:, ch] = np.interp(uniform_t, timestamps_ns, values[:, ch])
-
-        return resampled
+        # Frequency-domain resampling preserves signal energy profile better
+        # than linear interpolation for impulsive keystroke transients.
+        # `timestamps_ns` is kept for interface compatibility and possible
+        # future diagnostics; scipy.signal.resample assumes near-uniform samples.
+        _ = timestamps_ns
+        out = resample(values, target_len, axis=0)
+        # Guard against tiny numerical imaginary parts from FFT internals.
+        if np.iscomplexobj(out):
+            out = np.real(out)
+        return np.asarray(out, dtype=np.float64)
 
     def extract_windows(self) -> list[dict]:
         """

@@ -9,3 +9,5 @@ pynput
 
 # Numerical processing (for preprocessor)
 numpy
+scipy
+tqdm

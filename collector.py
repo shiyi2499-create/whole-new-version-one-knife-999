@@ -81,6 +81,7 @@ class DataCollector:
             config.RAW_DIR, f"{self.session_prefix}_meta.txt"
         )
         self.prompts_log_path = self.events_csv_path.replace("_events.csv", "_prompts.csv")
+        self.attempts_log_path = self.events_csv_path.replace("_events.csv", "_attempts.csv")
 
         # State
         self._stop_event = threading.Event()
@@ -144,7 +145,13 @@ class DataCollector:
 
     def _delete_session_files(self):
         """Delete session artifacts for aborted runs (e.g., failed frequency gate)."""
-        for p in [self.sensor_csv_path, self.events_csv_path, self.meta_path, self.prompts_log_path]:
+        for p in [
+            self.sensor_csv_path,
+            self.events_csv_path,
+            self.meta_path,
+            self.prompts_log_path,
+            self.attempts_log_path,
+        ]:
             if os.path.exists(p):
                 try:
                     os.remove(p)
@@ -488,6 +495,25 @@ class DataCollector:
         prompts_file = open(self.prompts_log_path, "w", newline="")
         prompts_writer = csv.writer(prompts_file)
         prompts_writer.writerow(["prompt_index", "timestamp_ns", "prompt_text", "typed_text", "match"])
+        attempts_file = open(self.attempts_log_path, "w", newline="")
+        attempts_writer = csv.writer(attempts_file)
+        attempts_writer.writerow([
+            "prompt_index",
+            "attempt_index",
+            "attempt_start_ns",
+            "submit_ns",
+            "elapsed_ms",
+            "prompt_text",
+            "typed_text",
+            "match",
+            "backspace_count",
+            "typed_char_count",
+            "keypress_count",
+            "rate_now_hz",
+            "rate_median_hz_recent",
+            "rate_min_hz_recent",
+            "rate_max_hz_recent",
+        ])
 
         completed = 0
         for idx, prompt in enumerate(prompts):
@@ -509,9 +535,12 @@ class DataCollector:
                 print(f"  └─────────────────────────────────────────")
 
                 prompt_ts = time.perf_counter_ns()
+                attempt_start_ns = prompt_ts
 
                 # Track typed characters in a buffer
                 typed_buffer = []
+                backspace_count = 0
+                keypress_count = 0
 
                 waiting = True
                 while waiting and not self._stop_event.is_set():
@@ -524,12 +553,14 @@ class DataCollector:
                             if e.event_type != "press":
                                 continue
 
+                            keypress_count += 1
                             if e.key == "enter":
                                 waiting = False
                                 break
                             elif e.key == "backspace":
                                 if typed_buffer:
                                     typed_buffer.pop()
+                                backspace_count += 1
                             elif e.key == "space":
                                 typed_buffer.append(" ")
                             elif len(e.key) == 1:
@@ -544,19 +575,36 @@ class DataCollector:
                 # Check what was typed
                 typed_text = "".join(typed_buffer).strip()
                 expected = prompt.strip()
+                submit_ns = time.perf_counter_ns()
+                elapsed_ms = (submit_ns - attempt_start_ns) / 1_000_000.0
+                rate_now = self.rate_monitor.current_rate
+                rate_recent = self._recent_rate_stats(recent_sec=3.0)
 
                 if typed_text == expected:
                     matched = True
-                    rate = self.rate_monitor.current_rate
                     prompts_writer.writerow([idx, prompt_ts, prompt, typed_text, "YES"])
                     prompts_file.flush()
+                    attempts_writer.writerow([
+                        idx, attempt, attempt_start_ns, submit_ns, f"{elapsed_ms:.2f}",
+                        prompt, typed_text, "YES", backspace_count, len(typed_text),
+                        keypress_count, f"{rate_now:.2f}", f"{rate_recent['median']:.2f}",
+                        f"{rate_recent['min']:.2f}", f"{rate_recent['max']:.2f}",
+                    ])
+                    attempts_file.flush()
                     completed += 1
                     print(f"    ✅ Correct! ({completed}/{len(prompts)})  "
-                          f"Rate: {rate:.0f}Hz\n")
+                          f"Rate: {rate_now:.0f}Hz\n")
                 else:
                     # Show diff
                     prompts_writer.writerow([idx, prompt_ts, prompt, typed_text, "NO"])
                     prompts_file.flush()
+                    attempts_writer.writerow([
+                        idx, attempt, attempt_start_ns, submit_ns, f"{elapsed_ms:.2f}",
+                        prompt, typed_text, "NO", backspace_count, len(typed_text),
+                        keypress_count, f"{rate_now:.2f}", f"{rate_recent['median']:.2f}",
+                        f"{rate_recent['min']:.2f}", f"{rate_recent['max']:.2f}",
+                    ])
+                    attempts_file.flush()
                     print(f"    ❌ Mismatch! Please retype.")
                     print(f"    Expected: {expected}")
                     print(f"    You typed: {typed_text}")
@@ -573,8 +621,10 @@ class DataCollector:
                     print()
 
         prompts_file.close()
+        attempts_file.close()
         print(f"\n  Done! {completed} sentences completed.")
         print(f"  Prompts log: {self.prompts_log_path}")
+        print(f"  Attempts log: {self.attempts_log_path}")
 
     # ── Metadata ─────────────────────────────────────────────
 
@@ -603,6 +653,9 @@ class DataCollector:
             f.write(f"Sampling rate - avg: {rate_summary['avg']:.1f} Hz\n")
             f.write(f"Sensor CSV: {self.sensor_csv_path}\n")
             f.write(f"Events CSV: {self.events_csv_path}\n")
+            if self.mode == "free_type":
+                f.write(f"Prompts CSV: {self.prompts_log_path}\n")
+                f.write(f"Attempts CSV: {self.attempts_log_path}\n")
 
     # ── Public run ───────────────────────────────────────────
 

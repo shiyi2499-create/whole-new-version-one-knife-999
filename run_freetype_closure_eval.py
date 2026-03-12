@@ -639,7 +639,14 @@ def _nearest_window_fallback(ts: int,
     return ts_to_window.get(best_ts)
 
 
-def build_events_and_dataset(valid_sessions: list[SessionQuality], wcfg: WindowConfig) -> tuple[np.ndarray, dict]:
+def build_events_and_dataset(
+    valid_sessions: list[SessionQuality],
+    wcfg: WindowConfig,
+    dataset_yes_only: bool = True,
+    drop_iki_overlap: bool = True,
+    iki_overlap_ms: float = 200.0,
+    max_imputed_ratio: float = 0.03,
+) -> tuple[np.ndarray, dict]:
     X_all = []
     y_all = []
     ts_all = []
@@ -649,6 +656,13 @@ def build_events_and_dataset(valid_sessions: list[SessionQuality], wcfg: WindowC
     event_rows = []
     sentence_records = []
     imputed_window_count = 0
+    overlap_keystroke_count = 0
+    overlap_dropped_count = 0
+    dropped_sessions_imputed = []
+    session_build_stats = []
+
+    overlap_ns = int(max(0.0, float(iki_overlap_ms)) * 1_000_000)
+    max_imputed_ratio = max(0.0, float(max_imputed_ratio))
 
     global_idx = 0
     for sq in valid_sessions:
@@ -663,19 +677,16 @@ def build_events_and_dataset(valid_sessions: list[SessionQuality], wcfg: WindowC
         cur_sent_events = []
         sent_idx = 0
         typed_texts = sq.typed_texts
+        yes_idx = {i for i, m in enumerate(sq.prompt_matches) if m == "YES"} if dataset_yes_only else None
+        prev_keystroke_row = None
+
+        session_units = []
+        session_sentence_records = []
+        session_imputed = 0
 
         for evt in press_events:
             ts = evt["timestamp_ns"]
             key = evt["key"]
-            window = ts_to_window.get(ts)
-            imputed_window = False
-            if window is None:
-                window = _nearest_window_fallback(ts, ts_sorted, ts_to_window)
-                imputed_window = window is not None
-            if window is None:
-                continue
-            if imputed_window:
-                imputed_window_count += 1
             if key in SENTENCE_BOUNDARY_KEYS:
                 role = "sentence_boundary"
             elif key in WORD_BOUNDARY_KEYS:
@@ -687,32 +698,62 @@ def build_events_and_dataset(valid_sessions: list[SessionQuality], wcfg: WindowC
             else:
                 role = "keystroke"
 
+            sentence_allowed = (yes_idx is None) or (sent_idx in yes_idx)
+            if not sentence_allowed:
+                if key in SENTENCE_BOUNDARY_KEYS:
+                    sent_idx += 1
+                    prev_keystroke_row = None
+                continue
+
+            window = ts_to_window.get(ts)
+            imputed_window = False
+            if window is None:
+                window = _nearest_window_fallback(ts, ts_sorted, ts_to_window)
+                imputed_window = window is not None
+            if window is None:
+                continue
+            if imputed_window:
+                session_imputed += 1
+
             row = {
                 "session": os.path.basename(session),
                 "timestamp_ns": ts,
                 "sentence_idx": sent_idx,
                 "key": key,
                 "role": role,
-                "global_index": global_idx,
+                "global_index": -1,
                 "imputed_window": imputed_window,
+                "is_overlap": False,
+                "iki_prev_ms": None,
             }
-            event_rows.append(row)
-            cur_sent_events.append(row)
 
-            X_all.append(window)
-            y_all.append(key)
-            ts_all.append(ts)
-            sess_all.append(os.path.basename(session))
-            sent_idx_all.append(sent_idx)
-            role_all.append(role)
-            global_idx += 1
+            if role == "keystroke" and overlap_ns > 0 and prev_keystroke_row is not None:
+                dt_ns = ts - int(prev_keystroke_row["timestamp_ns"])
+                if 0 < dt_ns < overlap_ns:
+                    row["is_overlap"] = True
+                    row["iki_prev_ms"] = float(dt_ns / 1_000_000.0)
+                    prev_keystroke_row["is_overlap"] = True
+
+            if role == "keystroke":
+                prev_keystroke_row = row
+            elif role == "sentence_boundary":
+                prev_keystroke_row = None
+
+            session_units.append({
+                "row": row,
+                "window": window,
+                "key": key,
+                "timestamp_ns": ts,
+                "role": role,
+            })
+            cur_sent_events.append(row)
 
             if key in SENTENCE_BOUNDARY_KEYS:
                 if sent_idx < len(typed_texts):
                     reference = typed_texts[sent_idx]
                 else:
                     reference = keys_to_text([e["key"] for e in cur_sent_events])
-                sentence_records.append({
+                session_sentence_records.append({
                     "session": os.path.basename(session),
                     "sentence_idx": sent_idx,
                     "reference": normalize_text(reference),
@@ -723,12 +764,74 @@ def build_events_and_dataset(valid_sessions: list[SessionQuality], wcfg: WindowC
 
         if cur_sent_events:
             reference = typed_texts[sent_idx] if sent_idx < len(typed_texts) else keys_to_text([e["key"] for e in cur_sent_events])
-            sentence_records.append({
+            session_sentence_records.append({
                 "session": os.path.basename(session),
                 "sentence_idx": sent_idx,
                 "reference": normalize_text(reference),
                 "events": cur_sent_events.copy(),
             })
+
+        session_overlap_count = sum(
+            1
+            for u in session_units
+            if u["row"]["role"] == "keystroke" and bool(u["row"].get("is_overlap", False))
+        )
+        overlap_keystroke_count += session_overlap_count
+
+        session_overlap_dropped = 0
+        if drop_iki_overlap and overlap_ns > 0 and session_overlap_count > 0:
+            keep_ids = {
+                id(u["row"])
+                for u in session_units
+                if not (u["row"]["role"] == "keystroke" and bool(u["row"].get("is_overlap", False)))
+            }
+            session_overlap_dropped = len(session_units) - len(keep_ids)
+            overlap_dropped_count += session_overlap_dropped
+            session_units = [u for u in session_units if id(u["row"]) in keep_ids]
+            for rec in session_sentence_records:
+                rec["events"] = [e for e in rec["events"] if id(e) in keep_ids]
+            session_sentence_records = [rec for rec in session_sentence_records if rec["events"]]
+
+        kept_rows = len(session_units)
+        imputed_ratio = session_imputed / max(1, kept_rows)
+        dropped_by_imputed = bool(kept_rows > 0 and imputed_ratio > max_imputed_ratio)
+        if dropped_by_imputed:
+            dropped_sessions_imputed.append(os.path.basename(session))
+            session_build_stats.append({
+                "session": os.path.basename(session),
+                "rows_kept": kept_rows,
+                "imputed_count": int(session_imputed),
+                "imputed_ratio": float(imputed_ratio),
+                "overlap_keystroke_count": int(session_overlap_count),
+                "overlap_dropped_count": int(session_overlap_dropped),
+                "dropped_by_imputed_ratio": True,
+            })
+            continue
+
+        for u in session_units:
+            row = u["row"]
+            row["global_index"] = global_idx
+            global_idx += 1
+
+            event_rows.append(row)
+            X_all.append(u["window"])
+            y_all.append(u["key"])
+            ts_all.append(u["timestamp_ns"])
+            sess_all.append(row["session"])
+            sent_idx_all.append(int(row["sentence_idx"]))
+            role_all.append(u["role"])
+            imputed_window_count += int(bool(row["imputed_window"]))
+
+        sentence_records.extend(session_sentence_records)
+        session_build_stats.append({
+            "session": os.path.basename(session),
+            "rows_kept": kept_rows,
+            "imputed_count": int(session_imputed),
+            "imputed_ratio": float(imputed_ratio),
+            "overlap_keystroke_count": int(session_overlap_count),
+            "overlap_dropped_count": int(session_overlap_dropped),
+            "dropped_by_imputed_ratio": False,
+        })
 
     X_np = np.array(X_all, dtype=np.float32)
     y_np = np.array(y_all)
@@ -761,6 +864,14 @@ def build_events_and_dataset(valid_sessions: list[SessionQuality], wcfg: WindowC
         "event_rows": event_rows,
         "sentence_records": sentence_records,
         "imputed_window_count": imputed_window_count,
+        "overlap_keystroke_count": int(overlap_keystroke_count),
+        "overlap_dropped_count": int(overlap_dropped_count),
+        "dataset_yes_only": bool(dataset_yes_only),
+        "drop_iki_overlap": bool(drop_iki_overlap),
+        "iki_overlap_ms": float(iki_overlap_ms),
+        "max_imputed_ratio": float(max_imputed_ratio),
+        "dropped_sessions_imputed": dropped_sessions_imputed,
+        "session_build_stats": session_build_stats,
     }
     return X_np, payload
 
@@ -873,6 +984,30 @@ def main():
         help="Evaluate only YES attempts from *_prompts.csv (recommended for sentence-level reporting)",
     )
     parser.add_argument(
+        "--dataset-yes-only",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="When building free_type_dataset.npz, keep only YES attempts (default: true).",
+    )
+    parser.add_argument(
+        "--drop-iki-overlap",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Drop overlapped keystroke windows with IKI below --iki-overlap-ms (default: true).",
+    )
+    parser.add_argument(
+        "--iki-overlap-ms",
+        type=float,
+        default=200.0,
+        help="IKI threshold in ms for overlap marking/filtering (default: 200).",
+    )
+    parser.add_argument(
+        "--max-imputed-ratio",
+        type=float,
+        default=0.03,
+        help="Drop sessions whose imputed-window ratio exceeds this value (default: 0.03).",
+    )
+    parser.add_argument(
         "--baseline-report",
         default=BASELINE_REPORT_27_PATH,
         help="Optional previous report path for before/after comparison",
@@ -894,11 +1029,24 @@ def main():
     dropped_sessions = [q for q in qualities if not q.is_valid]
     print(f"Valid sessions: {len(valid_sessions)} | Dropped sessions: {len(dropped_sessions)}")
 
-    X_free, payload = build_events_and_dataset(valid_sessions, wcfg)
+    X_free, payload = build_events_and_dataset(
+        valid_sessions,
+        wcfg,
+        dataset_yes_only=args.dataset_yes_only,
+        drop_iki_overlap=args.drop_iki_overlap,
+        iki_overlap_ms=args.iki_overlap_ms,
+        max_imputed_ratio=args.max_imputed_ratio,
+    )
+    if len(X_free) == 0:
+        raise RuntimeError("No free_type events remained after dataset filtering (YES/overlap/imputed gates).")
     y_free = payload["y"]
     event_rows = payload["event_rows"]
     sentence_records = payload["sentence_records"]
     imputed_window_count = int(payload.get("imputed_window_count", 0))
+    overlap_keystroke_count = int(payload.get("overlap_keystroke_count", 0))
+    overlap_dropped_count = int(payload.get("overlap_dropped_count", 0))
+    dropped_sessions_imputed = list(payload.get("dropped_sessions_imputed", []))
+    session_build_stats = list(payload.get("session_build_stats", []))
     print(f"Saved independent free_type dataset: {FREE_TYPE_DATASET_PATH} | X={X_free.shape}")
 
     model, classes, class_to_idx, means, stds = load_model_and_scaler(
@@ -1033,6 +1181,8 @@ def main():
             {"session": os.path.basename(q.session_prefix), "issues": q.issues}
             for q in dropped_sessions
         ],
+        "dropped_sessions_imputed_ratio": dropped_sessions_imputed,
+        "build_stats_by_session": session_build_stats,
         "overview": {
             "sentence_count": sentence_yes_count,
             "sentence_attempt_count": sentence_attempt_count,
@@ -1041,7 +1191,14 @@ def main():
             "total_presses": total_press,
             "total_windows": total_windows,
             "imputed_window_count": imputed_window_count,
+            "overlap_keystroke_count": overlap_keystroke_count,
+            "overlap_dropped_count": overlap_dropped_count,
             "valid_sample_rate": total_windows / max(1, total_press),
+            "dataset_rows_after_filters": int(len(y_free)),
+            "dataset_yes_only": bool(payload.get("dataset_yes_only", False)),
+            "drop_iki_overlap": bool(payload.get("drop_iki_overlap", False)),
+            "iki_overlap_ms": float(payload.get("iki_overlap_ms", 0.0)),
+            "max_imputed_ratio": float(payload.get("max_imputed_ratio", 0.0)),
             "alpha_coverage_count": len(alpha_cov),
             "alpha_coverage": "".join(alpha_cov),
             "digit_coverage_count": len(digit_cov),
@@ -1060,6 +1217,12 @@ def main():
             "scaler_path": args.scaler_path,
             "report_path": args.report_path,
             "evaluation_mode": "yes_only" if args.yes_only else "all_attempts",
+            "dataset_filter_mode": {
+                "dataset_yes_only": bool(args.dataset_yes_only),
+                "drop_iki_overlap": bool(args.drop_iki_overlap),
+                "iki_overlap_ms": float(args.iki_overlap_ms),
+                "max_imputed_ratio": float(args.max_imputed_ratio),
+            },
             "device": str(device),
         },
         "keystroke_metrics": {

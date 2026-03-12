@@ -1,7 +1,7 @@
 """
 Transformer-only Runner
 =======================
-Runs only the Transformer model on CPU (avoids MPS segfault),
+Runs only the Transformer model with switchable runtime profile/device,
 then merges results with the already-finished CNN/BiLSTM results
 from results/results_phase2.json, and runs the XGBoost ensemble.
 
@@ -18,6 +18,9 @@ import sys
 import time
 import json
 import copy
+import platform
+import random
+import argparse
 import numpy as np
 import warnings
 warnings.filterwarnings("ignore")
@@ -37,6 +40,13 @@ from sklearn.metrics import (
 from feature_extractor import extract_features_batch, get_feature_names
 
 try:
+    from tqdm.auto import tqdm
+except ImportError:
+    def tqdm(iterable, **kwargs):
+        return iterable
+    print("  ⚠ tqdm not installed. Install with: pip install tqdm")
+
+try:
     import xgboost as xgb
     HAS_XGB = True
 except ImportError:
@@ -49,13 +59,29 @@ try:
     import torch.optim as optim
     from torch.utils.data import DataLoader, TensorDataset
     HAS_TORCH = True
-    MPS_DEVICE = torch.device("mps" if torch.backends.mps.is_available()
-                              else "cuda" if torch.cuda.is_available()
-                              else "cpu")
-    # Transformer always runs on CPU to avoid MPS segfault on d_model=128/3-layer
-    CPU = torch.device("cpu")
-    print(f"  MPS available: {torch.backends.mps.is_available()}")
-    print(f"  Transformer will run on: {CPU}")
+
+    def resolve_torch_device(device: str = "auto") -> torch.device:
+        req = (device or "auto").lower()
+        if req == "auto":
+            if platform.system() == "Darwin":
+                req = "cpu"
+            elif torch.cuda.is_available():
+                req = "cuda"
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                req = "mps"
+            else:
+                req = "cpu"
+
+        if req == "cuda" and not torch.cuda.is_available():
+            raise RuntimeError("Requested device=cuda but CUDA is not available.")
+        if req == "mps" and not (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()):
+            raise RuntimeError("Requested device=mps but MPS is not available.")
+        if req not in {"cpu", "mps", "cuda"}:
+            raise ValueError("Unsupported device. Use one of auto/cpu/mps/cuda.")
+        return torch.device(req)
+
+    ACTIVE_DEVICE = resolve_torch_device(os.environ.get("KEYSTROKE_DEVICE", "auto"))
+    print(f"  PyTorch device (initial): {ACTIVE_DEVICE}")
 except ImportError:
     HAS_TORCH = False
     print("  ⚠ PyTorch not installed")
@@ -79,6 +105,121 @@ except ImportError:
 
 
 SEED = 42
+RUNTIME_NUM_WORKERS = 0
+RUNTIME_TORCH_THREADS = 1
+RUNTIME_DETERMINISTIC = True
+RUNTIME_XGB_JOBS = 1
+RUNTIME_SPLIT_MODE = "auto"
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Transformer-only training with runtime profile/device switches"
+    )
+    parser.add_argument(
+        "--profile",
+        choices=["mac", "server"],
+        default="mac",
+        help="Runtime preset: mac=CPU-safe deterministic, server=GPU-oriented defaults."
+    )
+    parser.add_argument(
+        "--device",
+        choices=["auto", "cpu", "mps", "cuda"],
+        default="auto",
+        help="Torch device override (default: auto; profile still sets sensible defaults)."
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="DataLoader workers override."
+    )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        help="PyTorch CPU thread count override."
+    )
+    parser.add_argument(
+        "--xgb-jobs",
+        type=int,
+        default=None,
+        help="n_jobs for XGBoost override."
+    )
+    parser.add_argument(
+        "--nondeterministic",
+        action="store_true",
+        help="Disable strict deterministic settings for max throughput."
+    )
+    parser.add_argument(
+        "--split-mode",
+        choices=["auto", "group", "sample"],
+        default="auto",
+        help="CV split mode: auto (default), group (session-wise), sample (stratified sample-wise)."
+    )
+    return parser.parse_args()
+
+
+def configure_runtime(args):
+    global ACTIVE_DEVICE
+    global RUNTIME_NUM_WORKERS, RUNTIME_TORCH_THREADS, RUNTIME_DETERMINISTIC, RUNTIME_XGB_JOBS
+    global RUNTIME_SPLIT_MODE
+
+    if args.profile == "mac":
+        default_device = "cpu"
+        default_workers = 0
+        default_threads = 1
+        default_xgb_jobs = 1
+    else:
+        default_device = "auto"
+        default_workers = 4
+        default_threads = max(1, (os.cpu_count() or 8) // 2)
+        default_xgb_jobs = -1
+
+    req_device = args.device if args.device != "auto" else default_device
+    ACTIVE_DEVICE = resolve_torch_device(req_device)
+    RUNTIME_NUM_WORKERS = args.num_workers if args.num_workers is not None else default_workers
+    RUNTIME_TORCH_THREADS = args.threads if args.threads is not None else default_threads
+    RUNTIME_XGB_JOBS = args.xgb_jobs if args.xgb_jobs is not None else default_xgb_jobs
+    RUNTIME_DETERMINISTIC = not args.nondeterministic
+    RUNTIME_SPLIT_MODE = args.split_mode
+
+    print(
+        "  Runtime config:\n"
+        f"    profile={args.profile}\n"
+        f"    device={ACTIVE_DEVICE}\n"
+        f"    num_workers={RUNTIME_NUM_WORKERS}\n"
+        f"    torch_threads={RUNTIME_TORCH_THREADS}\n"
+        f"    xgb_jobs={RUNTIME_XGB_JOBS}\n"
+        f"    deterministic={RUNTIME_DETERMINISTIC}\n"
+        f"    split_mode={RUNTIME_SPLIT_MODE}"
+    )
+
+
+def set_global_determinism(seed: int = SEED):
+    np.random.seed(seed)
+    random.seed(seed)
+    if not HAS_TORCH:
+        return
+    torch.set_num_threads(max(1, int(RUNTIME_TORCH_THREADS)))
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        if RUNTIME_DETERMINISTIC:
+            os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    try:
+        torch.use_deterministic_algorithms(RUNTIME_DETERMINISTIC, warn_only=True)
+    except Exception:
+        pass
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.deterministic = RUNTIME_DETERMINISTIC
+        torch.backends.cudnn.benchmark = (not RUNTIME_DETERMINISTIC)
+
+
+def _seed_worker(worker_id: int):
+    worker_seed = (torch.initial_seed() + worker_id) % (2 ** 32)
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def _topk_safe(y_true: np.ndarray, probs: np.ndarray, k: int) -> float:
@@ -131,23 +272,46 @@ def _get_groups_from_data(data, n_samples: int) -> Optional[np.ndarray]:
 
 def _build_outer_splits(y: np.ndarray,
                         groups: Optional[np.ndarray],
-                        n_splits: int = 5) -> tuple[list[tuple[np.ndarray, np.ndarray]], str]:
+                        n_splits: int = 5,
+                        split_mode: str = "auto") -> tuple[list[tuple[np.ndarray, np.ndarray]], str]:
+    mode = (split_mode or "auto").lower()
+
+    if mode == "sample":
+        splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+        return list(splitter.split(np.zeros(len(y)), y)), "StratifiedKFold(sample)"
+
+    if mode == "group":
+        if groups is None:
+            raise ValueError("split_mode=group requires session_ids in merged_dataset.npz")
+        uniq = np.unique(groups)
+        if len(uniq) < n_splits:
+            raise ValueError(f"split_mode=group requires at least {n_splits} unique groups, got {len(uniq)}")
+        if HAS_STRATIFIED_GROUP:
+            splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+            return list(splitter.split(np.zeros(len(y)), y, groups)), "StratifiedGroupKFold(group)"
+        splitter = GroupKFold(n_splits=n_splits)
+        return list(splitter.split(np.zeros(len(y)), y, groups)), "GroupKFold(group)"
+
     if groups is not None:
         uniq = np.unique(groups)
         if len(uniq) >= n_splits:
             if HAS_STRATIFIED_GROUP:
                 splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
-                return list(splitter.split(np.zeros(len(y)), y, groups)), "StratifiedGroupKFold"
+                return list(splitter.split(np.zeros(len(y)), y, groups)), "StratifiedGroupKFold(auto)"
             splitter = GroupKFold(n_splits=n_splits)
-            return list(splitter.split(np.zeros(len(y)), y, groups)), "GroupKFold"
+            return list(splitter.split(np.zeros(len(y)), y, groups)), "GroupKFold(auto)"
     splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
-    return list(splitter.split(np.zeros(len(y)), y)), "StratifiedKFold"
+    return list(splitter.split(np.zeros(len(y)), y)), "StratifiedKFold(auto)"
 
 
 def _split_train_val(train_idx: np.ndarray, y: np.ndarray,
-                     groups: Optional[np.ndarray], fold: int) -> tuple[np.ndarray, np.ndarray]:
+                     groups: Optional[np.ndarray], fold: int,
+                     split_protocol: str = "") -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(SEED + fold)
-    if groups is not None:
+    proto = (split_protocol or "").lower()
+    prefer_group = ("group" in proto) and ("sample" not in proto)
+
+    if prefer_group and groups is not None:
         tr_groups = groups[train_idx]
         if len(np.unique(tr_groups)) >= 2:
             gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED + fold)
@@ -239,7 +403,12 @@ class TransformerClassifier(nn.Module):
 
 def train_model(model, X_train, y_train, X_val, y_val,
                 epochs=350, lr=5e-4, batch_size=32,
-                augment=True, patience=40, device=CPU):
+                augment=True, patience=40, device=None, seed=SEED,
+                num_workers=None, progress_desc="Epoch"):
+    if device is None:
+        device = ACTIVE_DEVICE
+    if num_workers is None:
+        num_workers = RUNTIME_NUM_WORKERS
     model = model.to(device)
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -250,13 +419,31 @@ def train_model(model, X_train, y_train, X_val, y_val,
     X_vl = torch.FloatTensor(X_val).to(device)
     y_vl = torch.LongTensor(y_val).to(device)
 
-    loader = DataLoader(TensorDataset(X_tr, y_tr), batch_size=batch_size, shuffle=True)
+    dl_gen = torch.Generator()
+    dl_gen.manual_seed(seed)
+    loader = DataLoader(
+        TensorDataset(X_tr, y_tr),
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        worker_init_fn=_seed_worker if num_workers > 0 else None,
+        generator=dl_gen,
+        persistent_workers=(num_workers > 0),
+    )
 
     best_val_acc = 0.0
     best_state = None
     patience_counter = 0
 
-    for epoch in range(epochs):
+    epoch_iter = tqdm(
+        range(epochs),
+        desc=progress_desc,
+        unit="ep",
+        dynamic_ncols=True,
+        leave=False,
+        mininterval=0.5,
+    )
+    for epoch in epoch_iter:
         model.train()
         total_loss, correct, total = 0, 0, 0
         for xb, yb in loader:
@@ -286,6 +473,12 @@ def train_model(model, X_train, y_train, X_val, y_val,
         else:
             patience_counter += 1
 
+        epoch_iter.set_postfix({
+            "val": f"{val_acc:.3f}",
+            "best": f"{best_val_acc:.3f}",
+            "pat": f"{patience_counter}/{patience}",
+        }, refresh=False)
+
         if patience_counter >= patience:
             print(f"      Early stop at epoch {epoch+1} (patience={patience})")
             break
@@ -294,6 +487,9 @@ def train_model(model, X_train, y_train, X_val, y_val,
             train_acc = correct / total
             print(f"      Epoch {epoch+1:3d}: loss={total_loss/total:.4f}  "
                   f"train_acc={train_acc:.3f}  val_acc={val_acc:.3f}")
+
+    if hasattr(epoch_iter, "close"):
+        epoch_iter.close()
 
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -311,7 +507,9 @@ def run_transformer_cv(X_raw, y_keys, groups=None, outer_splits=None, split_mode
     n_classes = len(le.classes_)
 
     if outer_splits is None:
-        outer_splits, split_mode = _build_outer_splits(y_enc, groups, n_splits=5)
+        outer_splits, split_mode = _build_outer_splits(
+            y_enc, groups, n_splits=5, split_mode=RUNTIME_SPLIT_MODE
+        )
     elif split_mode is None:
         split_mode = "precomputed"
 
@@ -322,7 +520,11 @@ def run_transformer_cv(X_raw, y_keys, groups=None, outer_splits=None, split_mode
 
     for fold, (train_idx, test_idx) in enumerate(outer_splits):
         print(f"    Fold {fold+1}/{n_folds}...")
-        train_sub_idx, val_idx = _split_train_val(train_idx, y_enc, groups, fold=fold)
+        fold_seed = SEED + fold
+        set_global_determinism(fold_seed)
+        train_sub_idx, val_idx = _split_train_val(
+            train_idx, y_enc, groups, fold=fold, split_protocol=split_mode
+        )
         if len(train_sub_idx) == 0 or len(val_idx) == 0:
             train_sub_idx, val_idx = train_idx, test_idx
 
@@ -342,11 +544,13 @@ def run_transformer_cv(X_raw, y_keys, groups=None, outer_splits=None, split_mode
             model,
             X_train, y_enc[train_sub_idx],
             X_val, y_enc[val_idx],
-            device=CPU,
+            device=ACTIVE_DEVICE,
+            seed=fold_seed, num_workers=RUNTIME_NUM_WORKERS,
+            progress_desc=f"Transformer F{fold+1}/{n_folds}",
         )
         trained.eval()
         with torch.no_grad():
-            out = trained(torch.FloatTensor(X_test).to(CPU))
+            out = trained(torch.FloatTensor(X_test).to(ACTIVE_DEVICE))
             probs = torch.softmax(out, dim=1).cpu().numpy()
             preds = out.argmax(dim=1).cpu().numpy()
 
@@ -398,11 +602,13 @@ def run_xgb_cv(X_feat, y_keys, le, outer_splits=None, groups=None, split_mode=No
         ("clf", xgb.XGBClassifier(
             n_estimators=300, max_depth=6, learning_rate=0.1,
             subsample=0.8, colsample_bytree=0.8,
-            random_state=42, eval_metric="mlogloss", n_jobs=-1,
+            random_state=42, eval_metric="mlogloss", n_jobs=RUNTIME_XGB_JOBS,
         )),
     ])
     if outer_splits is None:
-        outer_splits, split_mode = _build_outer_splits(y_enc, groups, n_splits=5)
+        outer_splits, split_mode = _build_outer_splits(
+            y_enc, groups, n_splits=5, split_mode=RUNTIME_SPLIT_MODE
+        )
     elif split_mode is None:
         split_mode = "precomputed"
 
@@ -483,20 +689,19 @@ def run_ensemble(tf_probs, tf_acc, xgb_probs, xgb_acc, y_keys, le):
 # ══════════════════════════════════════════════════════════════
 
 def main():
+    args = parse_args()
+    configure_runtime(args)
     os.makedirs("results", exist_ok=True)
-    np.random.seed(SEED)
-    torch.manual_seed(SEED)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(SEED)
+    set_global_determinism(SEED)
 
-    # Disable PyTorch optimised attention kernels that cause segfault on macOS
-    # (affects both MPS and CPU TransformerEncoderLayer on some torch builds)
-    torch.set_num_threads(1)
-    try:
-        torch.backends.cuda.enable_flash_sdp(False)
-        torch.backends.cuda.enable_mem_efficient_sdp(False)
-    except Exception:
-        pass  # older torch versions don't have these flags
+    # On macOS/CPU, disable optimized SDPA kernels to avoid historical segfaults.
+    # Keep CUDA kernels enabled on server GPUs for speed.
+    if ACTIVE_DEVICE.type != "cuda":
+        try:
+            torch.backends.cuda.enable_flash_sdp(False)
+            torch.backends.cuda.enable_mem_efficient_sdp(False)
+        except Exception:
+            pass  # older torch versions don't have these flags
 
     print(f"\n{'='*60}\n  🤖 TRANSFORMER-ONLY RUNNER\n{'='*60}")
 
@@ -521,7 +726,9 @@ def main():
     if groups is not None:
         groups = groups[mask]
     print(f"\n  Data: {X_raw.shape}, {len(valid_keys)} classes, {rate}Hz")
-    outer_splits, split_mode = _build_outer_splits(y_keys, groups, n_splits=5)
+    outer_splits, split_mode = _build_outer_splits(
+        y_keys, groups, n_splits=5, split_mode=RUNTIME_SPLIT_MODE
+    )
     uniq_groups = len(np.unique(groups)) if groups is not None else 0
     print(f"  Split protocol: {split_mode}  (groups={uniq_groups})")
 
@@ -555,7 +762,7 @@ def main():
             print(f"  Loaded cached features: {X_feat.shape}")
 
     # ── Run Transformer CV ───────────────────────────────────
-    print(f"\n{'='*60}\n  TRANSFORMER (CPU, d_model=64, layers=3)\n{'='*60}")
+    print(f"\n{'='*60}\n  TRANSFORMER ({ACTIVE_DEVICE}, d_model=64, layers=3)\n{'='*60}")
     t0 = time.time()
     tf_metrics, tf_probs, le = run_transformer_cv(
         X_raw, y_keys,

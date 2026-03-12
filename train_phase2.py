@@ -21,6 +21,8 @@ import time
 import json
 import copy
 import platform
+import random
+import argparse
 import numpy as np
 import warnings
 warnings.filterwarnings("ignore")
@@ -43,6 +45,13 @@ from feature_extractor import (
     extract_features_batch, get_feature_names,
     map_to_zones, ZONE_LABELS, ZONE_MAPS
 )
+
+try:
+    from tqdm.auto import tqdm
+except ImportError:
+    def tqdm(iterable, **kwargs):
+        return iterable
+    print("  ⚠ tqdm not installed. Install with: pip install tqdm")
 
 # ── XGBoost ───────────────────────────────────────────────────
 try:
@@ -110,6 +119,124 @@ except ImportError:
 
 
 SEED = 42
+RUNTIME_NUM_WORKERS = 0
+RUNTIME_TORCH_THREADS = 1
+RUNTIME_DETERMINISTIC = True
+RUNTIME_XGB_JOBS = 1
+RUNTIME_SPLIT_MODE = "auto"
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Phase2 training with runtime profile/device switches"
+    )
+    parser.add_argument(
+        "--profile",
+        choices=["mac", "server"],
+        default="mac",
+        help="Runtime preset: mac=CPU-safe deterministic, server=GPU-oriented defaults."
+    )
+    parser.add_argument(
+        "--device",
+        choices=["auto", "cpu", "mps", "cuda"],
+        default="auto",
+        help="Torch device override (default: auto; profile still sets sensible defaults)."
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="DataLoader workers override."
+    )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        help="PyTorch CPU thread count override."
+    )
+    parser.add_argument(
+        "--xgb-jobs",
+        type=int,
+        default=None,
+        help="n_jobs for XGBoost/RandomForest override."
+    )
+    parser.add_argument(
+        "--nondeterministic",
+        action="store_true",
+        help="Disable strict deterministic settings for max throughput."
+    )
+    parser.add_argument(
+        "--split-mode",
+        choices=["auto", "group", "sample"],
+        default="auto",
+        help="CV split mode: auto (default), group (session-wise), sample (stratified sample-wise)."
+    )
+    return parser.parse_args()
+
+
+def configure_runtime(args):
+    global DEVICE
+    global RUNTIME_NUM_WORKERS, RUNTIME_TORCH_THREADS, RUNTIME_DETERMINISTIC, RUNTIME_XGB_JOBS
+    global RUNTIME_SPLIT_MODE
+
+    if args.profile == "mac":
+        default_device = "cpu"
+        default_workers = 0
+        default_threads = 1
+        default_xgb_jobs = 1
+    else:
+        default_device = "auto"
+        default_workers = 4
+        default_threads = max(1, (os.cpu_count() or 8) // 2)
+        default_xgb_jobs = -1
+
+    req_device = args.device if args.device != "auto" else default_device
+    if HAS_TORCH:
+        DEVICE = resolve_torch_device(req_device)
+
+    RUNTIME_NUM_WORKERS = args.num_workers if args.num_workers is not None else default_workers
+    RUNTIME_TORCH_THREADS = args.threads if args.threads is not None else default_threads
+    RUNTIME_XGB_JOBS = args.xgb_jobs if args.xgb_jobs is not None else default_xgb_jobs
+    RUNTIME_DETERMINISTIC = not args.nondeterministic
+    RUNTIME_SPLIT_MODE = args.split_mode
+
+    print(
+        "  Runtime config:\n"
+        f"    profile={args.profile}\n"
+        f"    device={DEVICE if HAS_TORCH else 'N/A'}\n"
+        f"    num_workers={RUNTIME_NUM_WORKERS}\n"
+        f"    torch_threads={RUNTIME_TORCH_THREADS}\n"
+        f"    xgb_jobs={RUNTIME_XGB_JOBS}\n"
+        f"    deterministic={RUNTIME_DETERMINISTIC}\n"
+        f"    split_mode={RUNTIME_SPLIT_MODE}"
+    )
+
+
+def set_global_determinism(seed: int = SEED):
+    np.random.seed(seed)
+    random.seed(seed)
+    if not HAS_TORCH:
+        return
+    torch.set_num_threads(max(1, int(RUNTIME_TORCH_THREADS)))
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+        if RUNTIME_DETERMINISTIC:
+            os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    try:
+        torch.use_deterministic_algorithms(RUNTIME_DETERMINISTIC, warn_only=True)
+    except Exception:
+        pass
+    if hasattr(torch.backends, "cudnn"):
+        torch.backends.cudnn.deterministic = RUNTIME_DETERMINISTIC
+        torch.backends.cudnn.benchmark = (not RUNTIME_DETERMINISTIC)
+
+
+def _seed_worker(worker_id: int):
+    # Ensure deterministic NumPy/Python RNG for each DataLoader worker.
+    worker_seed = (torch.initial_seed() + worker_id) % (2 ** 32)
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
 
 
 def _topk_safe(y_true: np.ndarray, probs: np.ndarray, k: int) -> float:
@@ -165,32 +292,60 @@ def _get_groups_from_data(data, n_samples: int) -> Optional[np.ndarray]:
 
 def _build_outer_splits(y: np.ndarray,
                         groups: Optional[np.ndarray],
-                        n_splits: int = 5) -> tuple[list[tuple[np.ndarray, np.ndarray]], str]:
+                        n_splits: int = 5,
+                        split_mode: str = "auto") -> tuple[list[tuple[np.ndarray, np.ndarray]], str]:
+    mode = (split_mode or "auto").lower()
+
+    if mode == "sample":
+        splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+        splits = list(splitter.split(np.zeros(len(y)), y))
+        return splits, "StratifiedKFold(sample)"
+
+    if mode == "group":
+        if groups is None:
+            raise ValueError("split_mode=group requires session_ids in merged_dataset.npz")
+        uniq = np.unique(groups)
+        if len(uniq) < n_splits:
+            raise ValueError(f"split_mode=group requires at least {n_splits} unique groups, got {len(uniq)}")
+        if HAS_STRATIFIED_GROUP:
+            splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
+            splits = list(splitter.split(np.zeros(len(y)), y, groups))
+            return splits, "StratifiedGroupKFold(group)"
+        splitter = GroupKFold(n_splits=n_splits)
+        splits = list(splitter.split(np.zeros(len(y)), y, groups))
+        return splits, "GroupKFold(group)"
+
     if groups is not None:
         uniq = np.unique(groups)
         if len(uniq) >= n_splits:
             if HAS_STRATIFIED_GROUP:
                 splitter = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
                 splits = list(splitter.split(np.zeros(len(y)), y, groups))
-                return splits, "StratifiedGroupKFold"
+                return splits, "StratifiedGroupKFold(auto)"
             splitter = GroupKFold(n_splits=n_splits)
             splits = list(splitter.split(np.zeros(len(y)), y, groups))
-            return splits, "GroupKFold"
+            return splits, "GroupKFold(auto)"
     splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=SEED)
     splits = list(splitter.split(np.zeros(len(y)), y))
-    return splits, "StratifiedKFold"
+    return splits, "StratifiedKFold(auto)"
 
 
 def _split_train_val(train_idx: np.ndarray, y: np.ndarray,
-                     groups: Optional[np.ndarray], fold: int) -> tuple[np.ndarray, np.ndarray]:
+                     groups: Optional[np.ndarray], fold: int,
+                     split_protocol: str = "") -> tuple[np.ndarray, np.ndarray]:
     rng = np.random.default_rng(SEED + fold)
-    if groups is not None:
+    proto = (split_protocol or "").lower()
+    prefer_group = ("group" in proto) and ("sample" not in proto)
+
+    if prefer_group and groups is not None:
         tr_groups = groups[train_idx]
         if len(np.unique(tr_groups)) >= 2:
             gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED + fold)
             tr_local, vl_local = next(gss.split(np.zeros(len(train_idx)), y[train_idx], tr_groups))
             return train_idx[tr_local], train_idx[vl_local]
-    # Fallback (legacy datasets without session groups)
+
+    # For sample-wise outer CV (or legacy data), keep inner val stratified by class.
+    # This avoids class-missing validation folds when groups are highly key-specific.
     if len(np.unique(y[train_idx])) > 1:
         sss = StratifiedShuffleSplit(n_splits=1, test_size=0.2, random_state=SEED + fold)
         tr_local, vl_local = next(sss.split(np.zeros(len(train_idx)), y[train_idx]))
@@ -236,7 +391,7 @@ class HierarchicalClassifier:
             ("scaler", StandardScaler()),
             ("clf", RandomForestClassifier(
                 n_estimators=300, random_state=42,
-                n_jobs=-1, class_weight="balanced"
+                n_jobs=RUNTIME_XGB_JOBS, class_weight="balanced"
             ))
         ])
         self.zone_model.fit(X_valid, y_zones_valid.astype(str))
@@ -272,14 +427,17 @@ class HierarchicalClassifier:
         return key_preds
 
 
-def run_hierarchical(X_feat, y_keys, groups=None):
+def run_hierarchical(X_feat, y_keys, groups=None, split_mode_override=None):
     print(
         f"\n{'='*60}\n"
         f"  PART A: Hierarchical Classification\n"
         f"{'='*60}"
     )
     results = {}
-    splits, split_mode = _build_outer_splits(y_keys, groups, n_splits=5)
+    splits, split_mode = _build_outer_splits(
+        y_keys, groups, n_splits=5,
+        split_mode=(split_mode_override or RUNTIME_SPLIT_MODE),
+    )
     print(f"  Split protocol: {split_mode}")
     for zone_type in ["hand", "row", "quadrant"]:
         print(f"\n  ── Hierarchical: zone={zone_type} ──")
@@ -347,6 +505,108 @@ def augment_batch(X_batch, p=0.5):
 # ── Model Definitions ────────────────────────────────────────
 
 if HAS_TORCH:
+    def _pick_inception_kernels(n_timesteps: int) -> tuple[int, int, int]:
+        cap = max(7, int(n_timesteps))
+        if cap % 2 == 0:
+            cap -= 1
+        kernels = []
+        for k in (9, 19, 39):
+            kk = min(k, cap)
+            if kk % 2 == 0:
+                kk -= 1
+            kk = max(3, kk)
+            if kk not in kernels:
+                kernels.append(kk)
+        cur = kernels[-1] if kernels else 7
+        while len(kernels) < 3:
+            cur = max(3, cur - 2)
+            if cur not in kernels:
+                kernels.append(cur)
+        return tuple(kernels[:3])
+
+
+    class InceptionModule1D(nn.Module):
+        """InceptionTime-style 1D module for multivariate time series."""
+        def __init__(self, in_channels: int, n_filters: int,
+                     kernel_sizes: tuple[int, int, int], bottleneck: int = 32):
+            super().__init__()
+            self.use_bottleneck = in_channels > 1 and bottleneck > 0
+            if self.use_bottleneck:
+                self.bottleneck = nn.Conv1d(in_channels, bottleneck, kernel_size=1, bias=False)
+                branch_in = bottleneck
+            else:
+                self.bottleneck = nn.Identity()
+                branch_in = in_channels
+
+            self.conv_branches = nn.ModuleList([
+                nn.Conv1d(branch_in, n_filters, kernel_size=k, padding=k // 2, bias=False)
+                for k in kernel_sizes
+            ])
+            self.pool_branch = nn.Sequential(
+                nn.MaxPool1d(kernel_size=3, stride=1, padding=1),
+                nn.Conv1d(in_channels, n_filters, kernel_size=1, bias=False),
+            )
+            self.bn = nn.BatchNorm1d(n_filters * 4)
+            self.relu = nn.ReLU()
+
+        def forward(self, x):
+            x_b = self.bottleneck(x)
+            outs = [conv(x_b) for conv in self.conv_branches]
+            outs.append(self.pool_branch(x))
+            out = torch.cat(outs, dim=1)
+            out = self.bn(out)
+            return self.relu(out)
+
+
+    class InceptionResidualBlock1D(nn.Module):
+        """Three Inception modules + residual shortcut (InceptionTime block)."""
+        def __init__(self, in_channels: int, n_filters: int, kernel_sizes: tuple[int, int, int]):
+            super().__init__()
+            self.m1 = InceptionModule1D(in_channels, n_filters, kernel_sizes)
+            mid_channels = n_filters * 4
+            self.m2 = InceptionModule1D(mid_channels, n_filters, kernel_sizes)
+            self.m3 = InceptionModule1D(mid_channels, n_filters, kernel_sizes)
+            self.shortcut = nn.Sequential(
+                nn.Conv1d(in_channels, mid_channels, kernel_size=1, bias=False),
+                nn.BatchNorm1d(mid_channels),
+            )
+            self.relu = nn.ReLU()
+
+        def forward(self, x):
+            out = self.m1(x)
+            out = self.m2(out)
+            out = self.m3(out)
+            return self.relu(out + self.shortcut(x))
+
+
+    class InceptionTimeClassifier(nn.Module):
+        """
+        InceptionTime (Fawaz et al.) style classifier.
+        Strong benchmark architecture for time-series classification.
+        """
+        def __init__(self, n_timesteps=39, n_channels=6, n_classes=42,
+                     n_filters=32, n_blocks=2):
+            super().__init__()
+            kernels = _pick_inception_kernels(n_timesteps)
+            blocks = []
+            in_ch = n_channels
+            for _ in range(n_blocks):
+                blocks.append(InceptionResidualBlock1D(in_ch, n_filters, kernels))
+                in_ch = n_filters * 4
+            self.backbone = nn.Sequential(*blocks)
+            self.head = nn.Sequential(
+                nn.AdaptiveAvgPool1d(1),
+                nn.Flatten(),
+                nn.Dropout(0.3),
+                nn.Linear(in_ch, n_classes),
+            )
+
+        def forward(self, x):
+            x = x.permute(0, 2, 1)
+            x = self.backbone(x)
+            return self.head(x)
+
+
     class Conv1DClassifier(nn.Module):
         """Simple 1D CNN. Handles variable n_timesteps via AdaptiveAvgPool1d."""
         def __init__(self, n_timesteps=39, n_channels=6, n_classes=42):
@@ -460,7 +720,7 @@ if HAS_TORCH:
 
 def train_dl_model(model, X_train, y_train, X_val, y_val,
                    epochs=200, lr=1e-3, batch_size=32, augment=True,
-                   patience=40):
+                   patience=40, seed=SEED, num_workers=0, progress_desc="Epoch"):
     """
     Train a PyTorch model with early stopping.
     patience raised to 40 (from 30) to give larger models time to converge.
@@ -476,14 +736,32 @@ def train_dl_model(model, X_train, y_train, X_val, y_val,
     y_vl = torch.LongTensor(y_val).to(DEVICE)
 
     train_dataset = TensorDataset(X_tr, y_tr)
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    dl_gen = torch.Generator()
+    dl_gen.manual_seed(seed)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        worker_init_fn=_seed_worker if num_workers > 0 else None,
+        generator=dl_gen,
+        persistent_workers=(num_workers > 0),
+    )
 
     best_val_acc = 0.0
     best_state = None
     patience_counter = 0
     history = {"train_loss": [], "train_acc": [], "val_acc": []}
 
-    for epoch in range(epochs):
+    epoch_iter = tqdm(
+        range(epochs),
+        desc=progress_desc,
+        unit="ep",
+        dynamic_ncols=True,
+        leave=False,
+        mininterval=0.5,
+    )
+    for epoch in epoch_iter:
         model.train()
         total_loss, correct, total = 0, 0, 0
 
@@ -520,6 +798,12 @@ def train_dl_model(model, X_train, y_train, X_val, y_val,
         else:
             patience_counter += 1
 
+        epoch_iter.set_postfix({
+            "val": f"{val_acc:.3f}",
+            "best": f"{best_val_acc:.3f}",
+            "pat": f"{patience_counter}/{patience}",
+        }, refresh=False)
+
         if patience_counter >= patience:
             print(f"      Early stop at epoch {epoch+1} (patience={patience})")
             break
@@ -527,6 +811,9 @@ def train_dl_model(model, X_train, y_train, X_val, y_val,
         if (epoch + 1) % 50 == 0:
             print(f"      Epoch {epoch+1:3d}: loss={train_loss:.4f}  "
                   f"train_acc={train_acc:.3f}  val_acc={val_acc:.3f}")
+
+    if hasattr(epoch_iter, "close"):
+        epoch_iter.close()
 
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -547,7 +834,9 @@ def evaluate_dl_model(ModelClass, X_raw, y_keys, model_name,
     n_classes = len(le.classes_)
 
     if outer_splits is None:
-        outer_splits, split_mode = _build_outer_splits(y_enc, groups, n_splits=5)
+        outer_splits, split_mode = _build_outer_splits(
+            y_enc, groups, n_splits=5, split_mode=RUNTIME_SPLIT_MODE
+        )
     elif split_mode is None:
         split_mode = "precomputed"
 
@@ -558,7 +847,11 @@ def evaluate_dl_model(ModelClass, X_raw, y_keys, model_name,
 
     for fold, (train_idx, test_idx) in enumerate(outer_splits):
         print(f"    Fold {fold+1}/{n_folds}...")
-        train_sub_idx, val_idx = _split_train_val(train_idx, y_enc, groups, fold=fold)
+        fold_seed = SEED + fold
+        set_global_determinism(fold_seed)
+        train_sub_idx, val_idx = _split_train_val(
+            train_idx, y_enc, groups, fold=fold, split_protocol=split_mode
+        )
         if len(train_sub_idx) == 0 or len(val_idx) == 0:
             train_sub_idx, val_idx = train_idx, test_idx
 
@@ -580,6 +873,8 @@ def evaluate_dl_model(ModelClass, X_raw, y_keys, model_name,
             X_train, y_enc[train_sub_idx],
             X_val, y_enc[val_idx],
             epochs=epochs, lr=lr, augment=augment, patience=patience,
+            seed=fold_seed, num_workers=RUNTIME_NUM_WORKERS,
+            progress_desc=f"{model_name} F{fold+1}/{n_folds}",
         )
         trained_model.eval()
         with torch.no_grad():
@@ -645,7 +940,7 @@ def run_xgb_cv(X_feat, y_keys, le, outer_splits=None, groups=None, split_mode=No
     xgb_model = xgb.XGBClassifier(
         n_estimators=300, max_depth=6, learning_rate=0.1,
         subsample=0.8, colsample_bytree=0.8,
-        random_state=42, eval_metric="mlogloss", n_jobs=-1,
+        random_state=42, eval_metric="mlogloss", n_jobs=RUNTIME_XGB_JOBS,
     )
     pipe = Pipeline([
         ("scaler", StandardScaler()),
@@ -653,7 +948,9 @@ def run_xgb_cv(X_feat, y_keys, le, outer_splits=None, groups=None, split_mode=No
     ])
 
     if outer_splits is None:
-        outer_splits, split_mode = _build_outer_splits(y_enc, groups, n_splits=5)
+        outer_splits, split_mode = _build_outer_splits(
+            y_enc, groups, n_splits=5, split_mode=RUNTIME_SPLIT_MODE
+        )
     elif split_mode is None:
         split_mode = "precomputed"
 
@@ -760,12 +1057,10 @@ def run_ensemble(X_feat, y_keys, le,
 # ══════════════════════════════════════════════════════════════
 
 def main():
+    args = parse_args()
+    configure_runtime(args)
     os.makedirs("results", exist_ok=True)
-    np.random.seed(SEED)
-    if HAS_TORCH:
-        torch.manual_seed(SEED)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(SEED)
+    set_global_determinism(SEED)
 
     print(
         f"\n{'='*60}\n"
@@ -795,7 +1090,9 @@ def main():
     if groups is not None:
         groups = groups[mask]
     print(f"\n  Data: {X_raw.shape}, {len(valid_keys)} classes, {rate}Hz")
-    split_preview, split_mode = _build_outer_splits(y_keys, groups, n_splits=5)
+    split_preview, split_mode = _build_outer_splits(
+        y_keys, groups, n_splits=5, split_mode=RUNTIME_SPLIT_MODE
+    )
     uniq_groups = len(np.unique(groups)) if groups is not None else 0
     print(f"  Split protocol: {split_mode}  (groups={uniq_groups})")
 
@@ -831,7 +1128,9 @@ def main():
     # ══════════════════════════════════════════════════════════
     #  PART A: Hierarchical
     # ══════════════════════════════════════════════════════════
-    hier_results = run_hierarchical(X_feat, y_keys, groups=groups)
+    hier_results = run_hierarchical(
+        X_feat, y_keys, groups=groups, split_mode_override=RUNTIME_SPLIT_MODE
+    )
     all_results.update(hier_results)
 
     # ══════════════════════════════════════════════════════════
@@ -851,6 +1150,7 @@ def main():
 
         dl_models = [
             ("1D_CNN",      Conv1DClassifier,    200, 1e-3, 40),
+            ("InceptionTime", InceptionTimeClassifier, 280, 8e-4, 60),
             ("CNN_BiLSTM",  CNNBiLSTMClassifier, 200, 1e-3, 40),
             # Transformer upgraded: d_model=128, num_layers=3, dropout↑, epochs↑
             ("Transformer", TransformerClassifier, 350, 5e-4, 40),

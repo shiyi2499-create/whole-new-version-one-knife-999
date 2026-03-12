@@ -633,3 +633,276 @@
     Fold 3/5...
       Epoch  50: loss=0.7434  train_acc=0.731  val_acc=0.783
       Epoch 100: loss=0.5351  train_acc=0.804  val_acc=0.813
+      Epoch 150: loss=0.4152  train_acc=0.846  val_acc=0.830
+      Epoch 200: loss=0.3155  train_acc=0.890  val_acc=0.846
+      Early stop at epoch 232 (patience=40)
+      → val_acc=0.855  test_acc=0.855
+    Fold 4/5...
+      Epoch  50: loss=0.7208  train_acc=0.729  val_acc=0.777
+      Epoch 100: loss=0.5175  train_acc=0.805  val_acc=0.810
+      Epoch 150: loss=0.3911  train_acc=0.860  val_acc=0.835
+      Epoch 200: loss=0.3192  train_acc=0.890  val_acc=0.848
+      Early stop at epoch 222 (patience=40)
+      → val_acc=0.860  test_acc=0.860
+    Fold 5/5...
+      Epoch  50: loss=0.7258  train_acc=0.726  val_acc=0.774
+      Epoch 100: loss=0.5266  train_acc=0.808  val_acc=0.817
+      Epoch 150: loss=0.3963  train_acc=0.857  val_acc=0.827
+      Early stop at epoch 194 (patience=40)
+      → val_acc=0.848  test_acc=0.848
+
+  Accuracy:  85.7%
+  Top-3:     98.6%
+  Top-5:     99.6%
+  Folds:     ['0.852', '0.871', '0.855', '0.860', '0.848']
+  Mean±Std:  0.857 ± 0.008
+  Time:      5099s
+  Saved → results/transformer_probs.npz
+
+  Loaded existing phase2 results (4 entries)
+
+  ⚠ Skipping ensemble (xgboost not installed)
+
+============================================================
+  📊 FULL RESULTS SUMMARY
+============================================================
+
+  ── Phase 1 ──
+    key36_RandomForest                   acc=74.0%  top3=94.0%
+    key36_SVM_RBF                        acc=78.3%  top3=96.7%
+    zone_hand                            acc=89.4%
+    zone_row                             acc=86.2%  top3=99.5%
+    zone_quadrant                        acc=86.1%  top3=99.5%
+
+  ── Phase 2 ──
+    dl_Transformer                       acc=85.7%  top3=98.6%  top5=99.6%
+    ensemble_prop                        acc=82.8%  top3=98.1%
+    ensemble_best                        acc=82.8%  top3=98.1%  top5=99.4%
+    xgb_standalone                       acc=69.5%
+
+  🏆 Best: dl_Transformer → 85.7%
+
+  Results saved → results/results_phase2.json
+
+============================================================
+  ✓ Done!
+============================================================
+
+  ⚠ xgboost not installed. Ensemble will be skipped.
+  PyTorch device: cpu
+
+============================================================
+  🧠 TRAINING PIPELINE - Phase 2
+     Hierarchical + Deep Learning + Ensemble
+============================================================
+  ⚠ 过滤低样本键: ['capslock'] (各 [1] 次)
+
+  Data: (6300, 57, 6), 42 classes, 190Hz
+  Loading cached features from results/features.npz
+
+============================================================
+  PART A: Hierarchical Classification
+============================================================
+
+  ── Hierarchical: zone=hand ──
+    Accuracy:  65.7%
+    Mean±Std:  0.657 ± 0.003
+
+  ── Hierarchical: zone=row ──
+    Accuracy:  67.1%
+    Mean±Std:  0.671 ± 0.010
+
+  ── Hierarchical: zone=quadrant ──
+    Accuracy:  66.2%
+    Mean±Std:  0.662 ± 0.005
+
+============================================================
+  PART B: Deep Learning Models
+============================================================
+
+  ── 1D_CNN ──
+    Fold 1/5...
+      Epoch  50: loss=0.5354  train_acc=0.805  val_acc=0.793
+      Epoch 100: loss=0.3151  train_acc=0.897  val_acc=0.813
+      Epoch 150: loss=0.2130  train_acc=0.930  val_acc=0.829
+      Epoch 200: loss=0.1829  train_acc=0.941  val_acc=0.836
+      → val_acc=0.841  test_acc=0.841
+    Fold 2/5...
+      Epoch  50: loss=0.5418  train_acc=0.812  val_acc=0.809
+      Epoch 100: loss=0.3371  train_acc=0.887  val_acc=0.848
+      Epoch 150: loss=0.2185  train_acc=0.933  val_acc=0.872
+      Early stop at epoch 193 (patience=40)
+      → val_acc=0.875  test_acc=0.875
+    Fold 3/5...
+      Epoch  50: loss=0.5645  train_acc=0.796  val_acc=0.810
+      Epoch 100: loss=0.2950  train_acc=0.899  val_acc=0.829
+      Epoch 150: loss=0.2187  train_acc=0.927  val_acc=0.856
+      Early stop at epoch 196 (patience=40)
+      → val_acc=0.867  test_acc=0.867
+    Fold 4/5...
+      Epoch  50: loss=0.5204  train_acc=0.817  val_acc=0.802
+      Epoch 100: loss=0.3318  train_acc=0.884  val_acc=0.832
+      Epoch 150: loss=0.2269  train_acc=0.925  val_acc=0.842
+      Early stop at epoch 172 (patience=40)
+      → val_acc=0.857  test_acc=0.857
+    Fold 5/5...
+      Epoch  50: loss=0.5087  train_acc=0.809  val_acc=0.804
+      Epoch 100: loss=0.2979  train_acc=0.899  val_acc=0.813
+      Epoch 150: loss=0.1997  train_acc=0.939  val_acc=0.836
+      Epoch 200: loss=0.1660  train_acc=0.949  val_acc=0.829
+      → val_acc=0.840  test_acc=0.840
+    Accuracy:     85.6%
+    Top-3:        98.7%
+    Top-5:        99.7%
+    Folds:        ['0.841', '0.875', '0.867', '0.857', '0.840']
+    Mean±Std:     0.856 ± 0.014
+    Time:         2501s
+
+  ── CNN_BiLSTM ──
+    Fold 1/5...
+      Epoch  50: loss=0.5413  train_acc=0.808  val_acc=0.730
+      Epoch 100: loss=0.2276  train_acc=0.929  val_acc=0.802
+      Epoch 150: loss=0.1166  train_acc=0.965  val_acc=0.824
+      Epoch 200: loss=0.0932  train_acc=0.975  val_acc=0.835
+      → val_acc=0.835  test_acc=0.835
+    Fold 2/5...
+      Epoch  50: loss=0.5149  train_acc=0.822  val_acc=0.798
+      Epoch 100: loss=0.2188  train_acc=0.930  val_acc=0.844
+      Epoch 150: loss=0.1169  train_acc=0.967  val_acc=0.851
+      Epoch 200: loss=0.0964  train_acc=0.972  val_acc=0.847
+      → val_acc=0.856  test_acc=0.856
+    Fold 3/5...
+      Epoch  50: loss=0.5516  train_acc=0.814  val_acc=0.797
+      Epoch 100: loss=0.2292  train_acc=0.929  val_acc=0.824
+      Epoch 150: loss=0.1287  train_acc=0.960  val_acc=0.847
+      Early stop at epoch 178 (patience=40)
+      → val_acc=0.857  test_acc=0.857
+    Fold 4/5...
+      Epoch  50: loss=0.4996  train_acc=0.831  val_acc=0.768
+      Epoch 100: loss=0.2301  train_acc=0.928  val_acc=0.829
+      Epoch 150: loss=0.1161  train_acc=0.968  val_acc=0.845
+      Early stop at epoch 200 (patience=40)
+      → val_acc=0.852  test_acc=0.852
+    Fold 5/5...
+      Epoch  50: loss=0.5519  train_acc=0.806  val_acc=0.792
+      Epoch 100: loss=0.2692  train_acc=0.914  val_acc=0.836
+      Epoch 150: loss=0.1359  train_acc=0.962  val_acc=0.829
+      Early stop at epoch 171 (patience=40)
+      → val_acc=0.850  test_acc=0.850
+    Accuracy:     85.0%
+    Top-3:        98.2%
+    Top-5:        99.4%
+    Folds:        ['0.835', '0.856', '0.857', '0.852', '0.850']
+    Mean±Std:     0.850 ± 0.008
+    Time:         5531s
+
+  ── Transformer ──
+    Fold 1/5...
+      Epoch  50: loss=0.4774  train_acc=0.825  val_acc=0.790
+      Epoch 100: loss=0.2960  train_acc=0.898  val_acc=0.819
+      Epoch 150: loss=0.1806  train_acc=0.939  val_acc=0.836
+      Early stop at epoch 177 (patience=40)
+      → val_acc=0.850  test_acc=0.850
+    Fold 2/5...
+      Epoch  50: loss=0.4916  train_acc=0.825  val_acc=0.782
+      Epoch 100: loss=0.2965  train_acc=0.894  val_acc=0.821
+      Epoch 150: loss=0.2064  train_acc=0.931  val_acc=0.841
+      Epoch 200: loss=0.1307  train_acc=0.956  val_acc=0.840
+      Epoch 250: loss=0.0717  train_acc=0.979  val_acc=0.854
+      Epoch 300: loss=0.0578  train_acc=0.981  val_acc=0.863
+      Early stop at epoch 320 (patience=40)
+      → val_acc=0.865  test_acc=0.865
+    Fold 3/5...
+      Epoch  50: loss=0.4737  train_acc=0.826  val_acc=0.802
+      Epoch 100: loss=0.3179  train_acc=0.888  val_acc=0.833
+      Epoch 150: loss=0.1933  train_acc=0.933  val_acc=0.845
+      Epoch 200: loss=0.1243  train_acc=0.959  val_acc=0.842
+      Epoch 250: loss=0.0805  train_acc=0.973  val_acc=0.861
+      Epoch 300: loss=0.0557  train_acc=0.982  val_acc=0.867
+      Early stop at epoch 340 (patience=40)
+      → val_acc=0.867  test_acc=0.867
+    Fold 4/5...
+      Epoch  50: loss=0.5205  train_acc=0.808  val_acc=0.779
+      Epoch 100: loss=0.2581  train_acc=0.910  val_acc=0.799
+      Epoch 150: loss=0.1961  train_acc=0.937  val_acc=0.828
+      Early stop at epoch 151 (patience=40)
+      → val_acc=0.837  test_acc=0.837
+    Fold 5/5...
+      Epoch  50: loss=0.4951  train_acc=0.824  val_acc=0.778
+      Epoch 100: loss=0.3114  train_acc=0.891  val_acc=0.816
+      Epoch 150: loss=0.1807  train_acc=0.939  val_acc=0.827
+      Epoch 200: loss=0.1359  train_acc=0.957  val_acc=0.850
+      Epoch 250: loss=0.0829  train_acc=0.973  val_acc=0.860
+      Early stop at epoch 268 (patience=40)
+      → val_acc=0.867  test_acc=0.867
+    Accuracy:     85.7%
+    Top-3:        98.6%
+    Top-5:        99.5%
+    Folds:        ['0.850', '0.865', '0.867', '0.837', '0.867']
+    Mean±Std:     0.857 ± 0.012
+    Time:         9453s
+  Saved Transformer probs → results/transformer_probs.npz
+
+============================================================
+  ABLATION: 1D CNN without data augmentation
+============================================================
+    Fold 1/5...
+      Epoch  50: loss=0.2732  train_acc=0.898  val_acc=0.759
+      Epoch 100: loss=0.0996  train_acc=0.967  val_acc=0.802
+      Epoch 150: loss=0.0437  train_acc=0.986  val_acc=0.792
+      Epoch 200: loss=0.0371  train_acc=0.988  val_acc=0.813
+      → val_acc=0.814  test_acc=0.814
+    Fold 2/5...
+      Epoch  50: loss=0.2995  train_acc=0.890  val_acc=0.798
+      Epoch 100: loss=0.1144  train_acc=0.961  val_acc=0.793
+      Early stop at epoch 103 (patience=40)
+      → val_acc=0.821  test_acc=0.821
+    Fold 3/5...
+      Epoch  50: loss=0.2750  train_acc=0.899  val_acc=0.762
+      Early stop at epoch 92 (patience=40)
+      → val_acc=0.838  test_acc=0.838
+    Fold 4/5...
+      Epoch  50: loss=0.2705  train_acc=0.903  val_acc=0.771
+      Epoch 100: loss=0.1176  train_acc=0.960  val_acc=0.817
+      Epoch 150: loss=0.0483  train_acc=0.985  val_acc=0.817
+      Early stop at epoch 166 (patience=40)
+      → val_acc=0.831  test_acc=0.831
+    Fold 5/5...
+      Epoch  50: loss=0.2805  train_acc=0.893  val_acc=0.808
+      Epoch 100: loss=0.1039  train_acc=0.967  val_acc=0.823
+      Epoch 150: loss=0.0453  train_acc=0.985  val_acc=0.817
+      Early stop at epoch 168 (patience=40)
+      → val_acc=0.829  test_acc=0.829
+    Accuracy (no aug): 82.7%
+    Accuracy (w/ aug): 85.6%
+
+  ⚠ Skipping ensemble (xgboost not installed)
+
+============================================================
+  📊 PHASE 2 RESULTS SUMMARY
+============================================================
+
+  ── Phase 1 (baselines) ──
+    key36_RandomForest                   acc=74.0%  top3=94.0%
+    key36_SVM_RBF                        acc=78.3%  top3=96.7%
+    zone_hand                            acc=89.4%
+    zone_row                             acc=86.2%  top3=99.5%
+    zone_quadrant                        acc=86.1%  top3=99.5%
+
+  ── Phase 2 ──
+    hierarchical_hand                    acc=65.7%
+    hierarchical_row                     acc=67.1%
+    hierarchical_quadrant                acc=66.2%
+    dl_1D_CNN                            acc=85.6%  top3=98.7%  top5=99.7%
+    dl_CNN_BiLSTM                        acc=85.0%  top3=98.2%  top5=99.4%
+    dl_Transformer                       acc=85.7%  top3=98.6%  top5=99.5%
+    dl_1D_CNN_no_aug                     acc=82.7%  top3=98.0%  top5=99.3%
+
+  🏆 Best: dl_Transformer → 85.7%
+
+  Results saved: results/results_phase2.json
+
+============================================================
+  ✓ Phase 2 complete!
+============================================================
+
