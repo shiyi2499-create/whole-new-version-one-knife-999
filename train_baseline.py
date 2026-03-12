@@ -23,8 +23,9 @@ import warnings
 warnings.filterwarnings("ignore")
 
 from collections import defaultdict
+from typing import Optional
 
-from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.model_selection import StratifiedKFold, GroupKFold, cross_val_predict
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 from sklearn.svm import SVC
@@ -57,6 +58,13 @@ except ImportError:
     HAS_PLOT = False
     print("  ⚠ matplotlib/seaborn not installed, skipping plots.")
 
+try:
+    from sklearn.model_selection import StratifiedGroupKFold
+    HAS_STRATIFIED_GROUP = True
+except ImportError:
+    StratifiedGroupKFold = None
+    HAS_STRATIFIED_GROUP = False
+
 
 # ══════════════════════════════════════════════════════════════
 #  DATA LOADING
@@ -70,13 +78,22 @@ def load_dataset(path: str = "data/processed/merged_dataset.npz"):
     X_raw = data["X"]       # (1800, 30, 6)
     y = data["y"]           # (1800,) string labels
     rate = int(data.get("target_rate_hz", 100))
+    groups = None
+    if "session_ids" in data.files:
+        g = data["session_ids"].astype(str)
+        if len(g) == len(y):
+            groups = g
 
     print(f"    X shape: {X_raw.shape}")
     print(f"    y shape: {y.shape}")
     print(f"    Classes: {len(set(y.tolist()))}")
     print(f"    Rate: {rate} Hz")
+    if groups is not None:
+        print(f"    Session groups: {len(np.unique(groups))}")
+    else:
+        print("    Session groups: not found (fallback to sample-level split)")
 
-    return X_raw, y, rate
+    return X_raw, y, rate, groups
 
 
 # ══════════════════════════════════════════════════════════════
@@ -137,21 +154,37 @@ def get_models():
 #  EVALUATION
 # ══════════════════════════════════════════════════════════════
 
-def evaluate_model(model, X, y, label_encoder, n_folds=5, task_name="key"):
+def _build_cv_splits(y_enc: np.ndarray,
+                     groups: Optional[np.ndarray],
+                     n_folds: int = 5):
+    """Build leakage-aware CV splits when session groups are available."""
+    if groups is not None:
+        uniq = np.unique(groups)
+        if len(uniq) >= n_folds:
+            if HAS_STRATIFIED_GROUP:
+                sgkf = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=42)
+                return list(sgkf.split(np.zeros(len(y_enc)), y_enc, groups)), "StratifiedGroupKFold(group)"
+            gkf = GroupKFold(n_splits=n_folds)
+            return list(gkf.split(np.zeros(len(y_enc)), y_enc, groups)), "GroupKFold(group)"
+    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
+    return list(skf.split(X=np.zeros(len(y_enc)), y=y_enc)), "StratifiedKFold(sample)"
+
+
+def evaluate_model(model, X, y, label_encoder, n_folds=5, task_name="key", groups=None):
     """
     Evaluate a model using stratified k-fold cross-validation.
     Returns predictions, probabilities, and metrics dict.
     """
-    skf = StratifiedKFold(n_splits=n_folds, shuffle=True, random_state=42)
     y_enc = label_encoder.transform(y)
     n_classes = len(label_encoder.classes_)
+    splits, split_protocol = _build_cv_splits(y_enc=y_enc, groups=groups, n_folds=n_folds)
 
     all_preds = np.zeros(len(y), dtype=int)
     all_probs = np.zeros((len(y), n_classes))
 
     fold_accs = []
 
-    for fold, (train_idx, test_idx) in enumerate(skf.split(X, y_enc)):
+    for fold, (train_idx, test_idx) in enumerate(splits):
         X_train, X_test = X[train_idx], X[test_idx]
         y_train, y_test = y_enc[train_idx], y_enc[test_idx]
 
@@ -188,6 +221,7 @@ def evaluate_model(model, X, y, label_encoder, n_folds=5, task_name="key"):
 
     metrics = {
         "task": task_name,
+        "split_protocol": split_protocol,
         "accuracy": overall_acc,
         "top3_accuracy": top3_acc,
         "top5_accuracy": top5_acc,
@@ -275,7 +309,7 @@ def main():
     )
 
     # ── 1. Load data ─────────────────────────────────────────
-    X_raw, y_keys, rate = load_dataset()
+    X_raw, y_keys, rate, groups = load_dataset()
 
     # 过滤掉采集时误触的杂类（样本数 < 10 的键，如 capslock 等）
     from collections import Counter
@@ -286,6 +320,8 @@ def main():
         print(f"  ⚠ 过滤低样本键: {removed} (各 {[key_counts[k] for k in removed]} 次)")
     mask = np.array([k in valid_keys for k in y_keys])
     X_raw, y_keys = X_raw[mask], y_keys[mask]
+    if groups is not None:
+        groups = groups[mask]
     print(f"  过滤后: {len(y_keys)} 样本, {len(valid_keys)} 类")
 
     # ── 2. Extract features ──────────────────────────────────
@@ -307,8 +343,10 @@ def main():
 
     # Save features for reuse
     feat_path = os.path.join(output_dir, "features.npz")
-    np.savez_compressed(feat_path, X=X_feat, y=y_keys,
-                        feature_names=feature_names)
+    payload = {"X": X_feat, "y": y_keys, "feature_names": feature_names}
+    if groups is not None:
+        payload["session_ids"] = groups
+    np.savez_compressed(feat_path, **payload)
     print(f"    Saved features: {feat_path}")
 
     # ── 3. Key classification (36 classes) ───────────────────
@@ -328,7 +366,7 @@ def main():
         print(f"\n  ── {name} ──")
         t0 = time.time()
         preds, probs, metrics = evaluate_model(
-            model, X_feat, y_keys, le_key, n_folds=5, task_name="key_36"
+            model, X_feat, y_keys, le_key, n_folds=5, task_name="key_36", groups=groups
         )
         elapsed = time.time() - t0
 
@@ -338,6 +376,7 @@ def main():
               f"({metrics['top3_accuracy']*100:.1f}%)")
         print(f"    Top-5 acc:    {metrics['top5_accuracy']:.3f}  "
               f"({metrics['top5_accuracy']*100:.1f}%)")
+        print(f"    Split:        {metrics['split_protocol']}")
         print(f"    Fold accs:    {[f'{a:.3f}' for a in metrics['fold_accuracies']]}")
         print(f"    Mean±Std:     {metrics['fold_mean']:.3f} ± {metrics['fold_std']:.3f}")
         print(f"    Time:         {elapsed:.1f}s")
@@ -421,11 +460,13 @@ def main():
 
         preds, probs, metrics = evaluate_model(
             rf_zone, X_zone, y_zone_valid.astype(str), le_zone,
-            n_folds=5, task_name=f"zone_{zone_type}"
+            n_folds=5, task_name=f"zone_{zone_type}",
+            groups=(groups[valid] if groups is not None else None),
         )
 
         print(f"    Accuracy:  {metrics['accuracy']:.3f}  "
               f"({metrics['accuracy']*100:.1f}%)")
+        print(f"    Split:     {metrics['split_protocol']}")
         print(f"    Fold:      {metrics['fold_mean']:.3f} ± {metrics['fold_std']:.3f}")
 
         all_results[f"zone_{zone_type}"] = metrics
@@ -456,7 +497,7 @@ def main():
 
     best_model = models[best_model_short]
     preds, probs, metrics = evaluate_model(
-        best_model, X_feat, y_keys, le_key, n_folds=5
+        best_model, X_feat, y_keys, le_key, n_folds=5, groups=groups
     )
     y_enc = le_key.transform(y_keys)
 

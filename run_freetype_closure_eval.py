@@ -85,25 +85,30 @@ def set_device(device: str = "auto") -> torch.device:
 
 class TransformerClassifier(nn.Module):
     def __init__(self, n_timesteps=39, n_channels=6, n_classes=42,
-                 d_model=64, nhead=4, num_layers=3):
+                 d_model=64, nhead=4, num_layers=3,
+                 dim_feedforward=128,
+                 dropout_encoder=0.3,
+                 dropout_head1=0.35,
+                 dropout_head2=0.25,
+                 cls_hidden=64):
         super().__init__()
         self.input_proj = nn.Linear(n_channels, d_model)
         self.pos_encoding = nn.Parameter(torch.randn(1, n_timesteps, d_model) * 0.02)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
             nhead=nhead,
-            dim_feedforward=128,
-            dropout=0.3,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout_encoder,
             batch_first=True,
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.classifier = nn.Sequential(
             nn.LayerNorm(d_model),
-            nn.Dropout(0.35),
-            nn.Linear(d_model, 64),
+            nn.Dropout(dropout_head1),
+            nn.Linear(d_model, cls_hidden),
             nn.ReLU(),
-            nn.Dropout(0.25),
-            nn.Linear(64, n_classes),
+            nn.Dropout(dropout_head2),
+            nn.Linear(cls_hidden, n_classes),
         )
 
     def forward(self, x):
@@ -112,6 +117,72 @@ class TransformerClassifier(nn.Module):
         x = self.transformer(x)
         x = x.mean(dim=1)
         return self.classifier(x)
+
+
+def _infer_transformer_arch(model_state: dict, ckpt: Optional[dict] = None) -> dict:
+    """
+    Infer Transformer architecture from checkpoint metadata/state_dict.
+    This prevents silent 64/128 mismatch when loading different training outputs.
+    """
+    ckpt = ckpt or {}
+    if "input_proj.weight" not in model_state:
+        raise RuntimeError("Checkpoint missing input_proj.weight; cannot infer architecture.")
+
+    d_model = int(model_state["input_proj.weight"].shape[0])
+    n_channels_state = int(model_state["input_proj.weight"].shape[1])
+    n_channels = int(ckpt.get("n_channels", n_channels_state))
+    n_timesteps = int(ckpt.get("n_timesteps", model_state["pos_encoding"].shape[1]))
+
+    if "classifier.5.weight" in model_state:
+        n_classes_state = int(model_state["classifier.5.weight"].shape[0])
+    elif "classifier.4.weight" in model_state:
+        n_classes_state = int(model_state["classifier.4.weight"].shape[0])
+    else:
+        raise RuntimeError("Checkpoint missing classifier output layer; cannot infer n_classes.")
+    n_classes = int(ckpt.get("n_classes", n_classes_state))
+
+    # Number of encoder layers can be inferred from transformer.layers.* keys.
+    layer_ids = []
+    for k in model_state.keys():
+        m = re.match(r"transformer\.layers\.(\d+)\.", k)
+        if m:
+            layer_ids.append(int(m.group(1)))
+    num_layers = int(ckpt.get("num_layers", (max(layer_ids) + 1) if layer_ids else 3))
+
+    if "transformer.layers.0.linear1.weight" in model_state:
+        dim_feedforward = int(model_state["transformer.layers.0.linear1.weight"].shape[0])
+    else:
+        dim_feedforward = int(ckpt.get("dim_feedforward", 2 * d_model))
+
+    if "classifier.2.weight" in model_state:
+        cls_hidden = int(model_state["classifier.2.weight"].shape[0])
+    else:
+        cls_hidden = int(ckpt.get("cls_hidden", ckpt.get("classifier_hidden", max(64, d_model // 2))))
+
+    # NOTE: num_heads does not change parameter tensor shapes, so infer with metadata first.
+    if ckpt.get("nhead") is not None:
+        nhead = int(ckpt["nhead"])
+    else:
+        nhead = 8 if d_model >= 128 else 4
+
+    # Dropout values are not recoverable from state_dict; use metadata if present.
+    dropout_encoder = float(ckpt.get("dropout_encoder", 0.3))
+    dropout_head1 = float(ckpt.get("dropout_head1", 0.4 if d_model >= 128 else 0.35))
+    dropout_head2 = float(ckpt.get("dropout_head2", 0.3 if d_model >= 128 else 0.25))
+
+    return {
+        "n_timesteps": n_timesteps,
+        "n_channels": n_channels,
+        "n_classes": n_classes,
+        "d_model": d_model,
+        "nhead": nhead,
+        "num_layers": num_layers,
+        "dim_feedforward": dim_feedforward,
+        "dropout_encoder": dropout_encoder,
+        "dropout_head1": dropout_head1,
+        "dropout_head2": dropout_head2,
+        "cls_hidden": cls_hidden,
+    }
 
 
 @dataclass
@@ -339,11 +410,13 @@ def load_model_and_scaler(model_path: str = MODEL_PATH,
     else:
         raise RuntimeError("Unsupported model file format.")
 
-    model = TransformerClassifier(
-        n_timesteps=ckpt["n_timesteps"],
-        n_channels=ckpt["n_channels"],
-        n_classes=ckpt["n_classes"],
-    ).to(DEVICE)
+    arch = _infer_transformer_arch(model_state, ckpt=ckpt)
+    print(
+        "  Loaded model arch: "
+        f"d_model={arch['d_model']}, nhead={arch['nhead']}, layers={arch['num_layers']}, "
+        f"ff={arch['dim_feedforward']}, cls_hidden={arch['cls_hidden']}"
+    )
+    model = TransformerClassifier(**arch).to(DEVICE)
     model.load_state_dict(model_state)
     model.eval()
 

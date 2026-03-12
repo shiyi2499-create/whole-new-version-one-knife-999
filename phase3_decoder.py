@@ -831,6 +831,7 @@ def simulate_word_decoding(
         return {}
 
     results = {
+        "evaluation_mode": "synthetic_word_simulation_from_isolated_keystrokes",
         "n_words":      n_valid,
         "raw_acc":      raw_correct / n_valid,
         "beam1_acc":    beam1_correct / n_valid,
@@ -870,6 +871,7 @@ def run_eval_mode(probs_path: str = "results/ensemble_probs.npz"):
 
     # ── Simulate word decoding ────────────────────────────────
     print(f"\n{'='*60}\n  WORD DECODING SIMULATION (N=500 words)\n{'='*60}")
+    print("  ⚠ This is a synthetic protocol (not real free_type end-to-end decoding).")
     results = simulate_word_decoding(probs, y_true, classes, lm, word_decoder,
                                      n_words=500, min_word_len=3, max_word_len=8)
 
@@ -886,6 +888,7 @@ def run_eval_mode(probs_path: str = "results/ensemble_probs.npz"):
         print(f"  Top-5 coverage:       {results['top5_acc']:.1%}  "
               f"(correct word in top-5 candidates)")
         print(f"\n  LM gain over raw:     {results['lm_gain']:+.1%}")
+        print("  ⚠ Do not use this number as free_type headline accuracy.")
 
     # ── Save results ─────────────────────────────────────────
     out_path = "results/results_phase3.json"

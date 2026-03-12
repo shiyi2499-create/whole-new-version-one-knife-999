@@ -118,9 +118,10 @@ python3 preprocessor.py --rounds free_type --session-type free_type --target-rat
 > 请在更新代码后重新运行一次预处理，以启用会话级分组切分评估（避免 session 泄漏）。
 
 ### 训练协议（当前）
-- 深度模型与 XGBoost 评估默认使用会话级分组切分（优先 `StratifiedGroupKFold`）。
+- Phase1/Phase2 评估默认使用会话级分组切分（优先 `StratifiedGroupKFold`）。
 - 每个外层测试折内部再划分训练/验证集（不再把 test fold 当验证集）。
 - 结果新增：`accuracy_ci95`、`macro_f1`、`per_key_recall`。
+- `train_baseline.py` 已与 Phase2 对齐：优先 group-wise split，输出 `split_protocol`，避免 Phase1 session 泄漏虚高。
 
 ### free_type 评估/微调链路（2026-03-12 已实现）
 
@@ -137,6 +138,13 @@ python3 preprocessor.py --rounds free_type --session-type free_type --target-rat
   - Stage2 全网络解冻微调
 - 类平衡采样：`--balanced-sampling`（默认开）
 - 支持继承 F1 的数据门禁参数（YES-only / IKI / imputed ratio）
+
+### 模型结构一致性修复（2026-03-13）
+
+- `run_real_freetype.py` 保存最终模型时会写入 Transformer 架构元信息：
+  - `d_model / nhead / num_layers / dim_feedforward / cls_hidden / dropout*`
+- `run_freetype_closure_eval.py` 加载 checkpoint 时会自动推断并打印架构，避免 64/128 结构不一致导致的加载失败或静默评估偏差。
+- 该修复用于保证：训练脚本与 free_type 闭环评估脚本在模型结构上严格一致。
 
 ### 训练运行开关（Mac / 服务器）
 
@@ -170,6 +178,10 @@ python3 preprocessor.py --rounds free_type --session-type free_type --target-rat
   - `run_freetype_finetune_beam.py`（微调前后对比）
 - 🟥【未开始】Step 5: 论文级整理
   - 指标表、消融、威胁模型边界、可复现实验脚本
+
+> 注：`phase3_decoder.py` 当前是“isolated keystroke → synthetic word simulation”评估，
+> 不能当作真实 free_type 端到端准确率 headline。
+> `results_phase3.json` 已新增 `evaluation_mode` 字段，防止口径误读。
 
 ## 7. 开放技术问题：能否强制跑到最高频档？
 

@@ -184,10 +184,22 @@ def train_final_model(X_raw, y_keys, epochs=300, lr=5e-4,
         else:
             ch_stds[ch] = 1.0
 
+    d_model = 64
+    nhead = 4
+    num_layers = 3
+    dim_feedforward = 128
+    dropout_encoder = 0.3
+    dropout_head1 = 0.35
+    dropout_head2 = 0.25
+    cls_hidden = 64
+
     model = TransformerClassifier(
         n_timesteps=X_norm.shape[1],
         n_channels=X_norm.shape[2],
         n_classes=n_classes,
+        d_model=d_model,
+        nhead=nhead,
+        num_layers=num_layers,
     ).to(DEVICE)
 
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
@@ -260,6 +272,14 @@ def train_final_model(X_raw, y_keys, epochs=300, lr=5e-4,
         "n_channels":  X_norm.shape[2],
         "n_classes":   n_classes,
         "classes":     le.classes_,
+        "d_model": d_model,
+        "nhead": nhead,
+        "num_layers": num_layers,
+        "dim_feedforward": dim_feedforward,
+        "dropout_encoder": dropout_encoder,
+        "dropout_head1": dropout_head1,
+        "dropout_head2": dropout_head2,
+        "cls_hidden": cls_hidden,
     }, MODEL_PATH)
     np.savez(SCALER_PATH, means=ch_means, stds=ch_stds)
     print(f"  Saved → {MODEL_PATH}")
@@ -275,6 +295,9 @@ def load_final_model(y_keys=None):
         n_timesteps=ckpt["n_timesteps"],
         n_channels=ckpt["n_channels"],
         n_classes=ckpt["n_classes"],
+        d_model=int(ckpt.get("d_model", 64)),
+        nhead=int(ckpt.get("nhead", 4)),
+        num_layers=int(ckpt.get("num_layers", 3)),
     )
     model.load_state_dict(ckpt["model_state"])
     model.eval()
