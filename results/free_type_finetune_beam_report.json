@@ -1,0 +1,172 @@
+{
+  "config": {
+    "device": "cpu",
+    "rounds": [
+      "3"
+    ],
+    "eval_ratio": 0.2,
+    "seed": 42,
+    "epochs": 14,
+    "lr": 0.0001,
+    "batch_size": 64,
+    "aug_prob": 0.6,
+    "beam": 100,
+    "alpha": 0.15,
+    "prior_weight": 1.0,
+    "special_weight": 0.7
+  },
+  "data": {
+    "session_count": 10,
+    "valid_session_count": 10,
+    "dropped_session_count": 0,
+    "sentence_count": 130,
+    "train_sentence_count": 104,
+    "eval_sentence_count": 26,
+    "train_keystroke_count": 4698,
+    "eval_keystroke_count": 1184
+  },
+  "metrics_before_finetune": {
+    "keystroke_topk": {
+      "n_eval": 1184,
+      "top1": 0.03969594594594594,
+      "top3": 0.13851351351351351,
+      "top5": 0.22381756756756757
+    },
+    "beam_decode": {
+      "sentence_count": 26,
+      "sentence_exact_match": 0.0,
+      "cer": 0.7575757575757576,
+      "wer": 1.0043859649122806,
+      "char_edits": 850,
+      "char_ref_len": 1122,
+      "word_edits": 229,
+      "word_ref_len": 228
+    }
+  },
+  "metrics_after_finetune": {
+    "keystroke_topk_raw": {
+      "n_eval": 1184,
+      "top1": 0.34375,
+      "top3": 0.6021959459459459,
+      "top5": 0.7364864864864865
+    },
+    "keystroke_topk": {
+      "n_eval": 1184,
+      "top1": 0.33699324324324326,
+      "top3": 0.5844594594594594,
+      "top5": 0.7255067567567568
+    },
+    "beam_decode": {
+      "sentence_count": 26,
+      "sentence_exact_match": 0.0,
+      "cer": 0.551693404634581,
+      "wer": 0.9254385964912281,
+      "char_edits": 619,
+      "char_ref_len": 1122,
+      "word_edits": 211,
+      "word_ref_len": 228
+    }
+  },
+  "calibration": {
+    "temperature": 1.1000000000000005,
+    "prior_weight": 1.0,
+    "special_weight": 0.7,
+    "special_bias": {
+      "0": 0.6466108828692663,
+      "1": 0.644068299837139,
+      "2": 0.7174022960445198,
+      "3": 1.1015478219057482,
+      "4": 0.873171543493239,
+      "5": 0.8881625554884502,
+      "6": 1.394766950652762,
+      "7": 1.318232268797954,
+      "8": 1.2779267092303999,
+      "9": 0.7288105564620563,
+      "backspace": 0.7594376880672771,
+      "space": -0.3012944636519083
+    },
+    "temperature_fit_nll_train": 2.2701143099007663
+  },
+  "beam_search_optimization": {
+    "current_config": {
+      "beam": 100,
+      "alpha": 0.15
+    },
+    "current_metrics": {
+      "cer": 0.551693404634581,
+      "wer": 0.9254385964912281,
+      "sentence_exact_match": 0.0
+    },
+    "grid_candidates": [],
+    "best_config": null,
+    "delta_best_minus_current": null
+  },
+  "prompt_aware_upper_bound": {
+    "beam": 100,
+    "alpha": 0.15,
+    "metrics": {
+      "sentence_count": 26,
+      "sentence_exact_match": 0.0,
+      "cer": 0.42780748663101603,
+      "wer": 0.7412280701754386,
+      "char_edits": 480,
+      "char_ref_len": 1122,
+      "word_edits": 169,
+      "word_ref_len": 228
+    }
+  },
+  "delta_after_minus_before": {
+    "top1": 0.2972972972972973,
+    "top3": 0.44594594594594594,
+    "top5": 0.5016891891891893,
+    "cer": -0.20588235294117652,
+    "wer": -0.07894736842105254,
+    "sentence_exact_match": 0.0
+  },
+  "examples_eval": [
+    {
+      "reference": "grocery list has 2 apples 3 bananas and 1 melon",
+      "before": "bluntly ut0y rdf ? ttu0wy ? xxxtbvz tux ? ytuuy",
+      "after": "tamarao leet tee ? epopee ? benshee tee ? melon"
+    },
+    {
+      "reference": "order 7781 shipped 6 items to box 14",
+      "before": "mtwtv y000 xxuoutv ? uxhnb t4 mob wy",
+      "after": "teaer t001 snooper ? otate ro tar 1t"
+    },
+    {
+      "reference": "store aisle 5 has cereal pack size 12",
+      "before": "wxxxx strut ? oxy xys0su usun x0xx by",
+      "after": "eeler elsie ? nee alexei peel epee 1l"
+    },
+    {
+      "reference": "coupon 30 saved 7 on bill 105",
+      "before": "tubing wy tzyxx ? mm v0ty 4tt",
+      "after": "eolith et esere ? in nori roe"
+    },
+    {
+      "reference": "she walked quickly through the park and sat on a bench",
+      "before": "gut ttuttb thingum gxttuyy bbb usom tnt tut yn ? vxxxx",
+      "after": "ate elodea fitroot theatry ens peen ens eat on ? netty"
+    },
+    {
+      "reference": "he finished reading the entire book in just two days",
+      "before": "by xyvutxyv tuuyyxx tnt wnu0yt nt66 un vyyv too xxxv",
+      "after": "ne timorese reality see entire noil in most two rate"
+    },
+    {
+      "reference": "my favorite subject in school was always mathematics",
+      "before": "by xsyutuxt ttbybty un unboot tun 55tmxx nbyyxvbbbvv",
+      "after": "nu favorite contest in school are oleate mathematics"
+    },
+    {
+      "reference": "order number 30518 was shipped on january 9 2026",
+      "before": "tttub nobbut tuktu tut vbuttbv un nunnify ? yutu",
+      "after": "reese titter eo3e0 eer snooper or kennett ? eo1t"
+    }
+  ],
+  "analysis_notes": [
+    "keystroke top1 is still low; consider expanding free_type coverage and more balanced digits/backspace samples",
+    "WER is high; decoder/LM adaptation and more natural sentence transitions are needed"
+  ]
+}

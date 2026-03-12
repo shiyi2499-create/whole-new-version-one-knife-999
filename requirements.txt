@@ -1,0 +1,11 @@
+# Keystroke Vibration Data Collector - Dependencies
+# Install: pip install -r requirements.txt
+
+# Apple Silicon IMU access (accelerometer + gyroscope via IOKit HID)
+macimu
+
+# Keyboard event listener (cross-platform)
+pynput
+
+# Numerical processing (for preprocessor)
+numpy

@@ -1,0 +1,18 @@
+Session: p01_single_key_g8_20260312_030636
+Mode: single_key
+Round: 1
+Group: 8 - Group 8 (hard keys)
+Keys in group: d f h j m n
+Participant: p01
+Start: 2026-03-12T03:06:36.822133
+End: 2026-03-12T03:13:57.776316
+Duration: 441.0s
+Total sensor samples: 88160
+Total key events: 1200
+Rate drop detected: False
+Session valid: True
+Sampling rate - min: 62.8 Hz
+Sampling rate - max: 210.7 Hz
+Sampling rate - avg: 199.6 Hz
+Sensor CSV: data/raw/boost/p01_single_key_g8_20260312_030636_sensor.csv
+Events CSV: data/raw/boost/p01_single_key_g8_20260312_030636_events.csv

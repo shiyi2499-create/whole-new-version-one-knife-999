@@ -1,0 +1,18 @@
+prompt_index,timestamp_ns,prompt_text,typed_text,match
+0,6882337750,please confirm task 101 before 9 am meeting,please confirm task 101 before 9 am meeting,YES
+1,25460496000,team alpha will review sprint 5 at 2 pm,team alpha will review sprint 5 at 2 pm,YES
+2,40171195208,send draft 3 to manager 7 by noon,send drafr 3 to manager 7 by noon,NO
+2,51516571458,send draft 3 to manager 7 by noon,send draft 3 to manager 7 by noon,YES
+3,64111880708,project room 12 has 4 open seats today,project room 12 has 4 open seats today,YES
+4,76278454000,daily standup starts at 10 and ends at 10 15,daily standup starts at 10 and ends at 10 15,YES
+5,89753780791,we logged 28 bugs and closed 19 this week,we logged 28 bugs and closed 19 this week,YES
+6,101371743750,client 24 requested invoice 8801 on monday,client 24 requested invoice 8801 on monday,YES
+7,115511450916,backup job 6 failed at 1 30 and retried,backup jbo 6 failed at 1 30 and retried,NO
+7,128036131416,backup job 6 failed at 1 30 and retried,back job 6 failed at 1 30 and retried,NO
+7,142535186250,backup job 6 failed at 1 30 and retried,back job 6 failed at 1 30 and retried,NO
+7,158534320708,backup job 6 failed at 1 30 and retried,backup job 6 failed at 1 30 and retried,YES
+8,178853263458,printer 2 needs toner after 640 pages,printer 2 needs toner after 640 pages,YES
+9,189405550083,office wifi 5g was stable for 8 hours,office wifi 5g was stable for 8 hours,YES
+10,200237288625,the planner shows 11 tasks for day 3,the planner shows 11 tasks for day 3,YES
+11,211440694791,mark checkpoint 2 after reading chapter 14,mark checkpoint 2 after reading chapter 14,YES
+12,226201822208,return keycard 9 to desk 4 after lunch,return keycard 9 to desk 4 after lunch,YES

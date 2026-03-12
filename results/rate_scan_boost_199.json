@@ -1,0 +1,51 @@
+{
+  "config": {
+    "data_root": "data/raw",
+    "mode": "single_key",
+    "target_hz": 199.0,
+    "tol": 5.0,
+    "metric": "median",
+    "sources": [
+      "boost"
+    ]
+  },
+  "rows": [
+    {
+      "source_dir": "boost",
+      "session": "p01_single_key_g8_20260309_231753",
+      "participant": "p01",
+      "mode": "single_key",
+      "tag": "g8",
+      "target_metric": "median",
+      "target_hz": 199.0,
+      "tol_hz": 5.0,
+      "effective_hz": 199.49275298671566,
+      "median_hz": 195.97915448125633,
+      "p10_hz": 193.93785183962657,
+      "p90_hz": 211.65122198465093,
+      "min_hz": 52.10289362798284,
+      "max_hz": 260824.2044861763,
+      "n_samples": 37193,
+      "within_target": true
+    },
+    {
+      "source_dir": "boost",
+      "session": "p01_single_key_g8_20260312_030636",
+      "participant": "p01",
+      "mode": "single_key",
+      "tag": "g8",
+      "target_metric": "median",
+      "target_hz": 199.0,
+      "tol_hz": 5.0,
+      "effective_hz": 199.92248865852238,
+      "median_hz": 196.7955388812882,
+      "p10_hz": 131.36504704510747,
+      "p90_hz": 392.05434437772294,
+      "min_hz": 48.526022079340045,
+      "max_hz": 235294.11764705883,
+      "n_samples": 88160,
+      "within_target": true
+    }
+  ],
+  "non_target_sessions": []
+}

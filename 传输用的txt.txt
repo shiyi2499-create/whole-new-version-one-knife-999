@@ -1,0 +1,82 @@
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [███████████████░░░░░░░░░░░░░░░] 25/50  Rate: 99Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [███████████████░░░░░░░░░░░░░░░] 26/50  Rate: 99Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [████████████████░░░░░░░░░░░░░░] 27/50  Rate: 100Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [████████████████░░░░░░░░░░░░░░] 28/50  Rate: 100Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [██████████████████░░░░░░░░░░░░] 31/50  Rate: 99Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [████████████████████░░░░░░░░░░] 34/50  Rate: 100Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [█████████████████████░░░░░░░░░] 35/50  Rate: 100Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [██████████████████████░░░░░░░░] 38/50  Rate: 99Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [████████████████████████░░░░░░] 40/50  Rate: 100Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [████████████████████████░░░░░░] 41/50  Rate: 100Hza[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [█████████████████████████░░░░░] 42/50  Rate: 99Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [███████████████████████████░░░] 45/50  Rate: 99Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [███████████████████████████░░░] 46/50  Rate: 98Hz[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+    [██████████████████████████████] 50/50  Rate: 100Hz
+    ✓ 'a' done!
+    (pause 2.0s...)
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+
+============================================================
+  ⚠️  SAMPLING RATE ALERT!
+  Rate dropped to 45.1 Hz (minimum: 96 Hz)
+  Recording stopped. Data collected so far has been SAVED.
+============================================================
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+[SensorReader] Error: 'NoneType' object has no attribute 'x'
+
+  All keys completed!
+
+============================================================
+  ⚠️  SAMPLING RATE ALERT!
+  Rate dropped to 11.1 Hz (minimum: 96 Hz)
+  Recording stopped. Data collected so far has been SAVED.
+============================================================
+
+============================================================
+  SESSION SUMMARY
+============================================================
+  Duration:        42.6s
+  Sensor samples:  4,269
+  Key events:      100
+  Avg rate:        1213.8 Hz
+  Min rate:        11.1 Hz
+  Max rate:        45505.9 Hz
+  Rate drop:       YES ⚠️
+  Session valid:   NO ⚠️ (rate drop)
+============================================================
+  Files saved:
+    data/raw/p01_single_key_20260306_213130_sensor.csv
+    data/raw/p01_single_key_20260306_213130_events.csv
+    data/raw/p01_single_key_20260306_213130_meta.txt
+============================================================
+
+  ⚠️  This session had a rate drop. Data collected BEFORE
+  the drop is still valid and saved. You may want to redo
+  the session for best results.

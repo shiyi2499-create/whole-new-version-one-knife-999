@@ -1,0 +1,123 @@
+  ⚠ xgboost not installed — ensemble will be skipped
+  MPS available: False
+  Transformer will run on: cpu
+
+============================================================
+  🤖 TRANSFORMER-ONLY RUNNER
+============================================================
+  ⚠ 过滤低样本键: ['capslock']
+
+  Data: (6300, 57, 6), 42 classes, 190Hz
+  ⚠ Feature cache shape mismatch — re-extracting...
+    Extracted features: 200/6300
+    Extracted features: 400/6300
+    Extracted features: 600/6300
+    Extracted features: 800/6300
+    Extracted features: 1000/6300
+    Extracted features: 1200/6300
+    Extracted features: 1400/6300
+    Extracted features: 1600/6300
+    Extracted features: 1800/6300
+    Extracted features: 2000/6300
+    Extracted features: 2200/6300
+    Extracted features: 2400/6300
+    Extracted features: 2600/6300
+    Extracted features: 2800/6300
+    Extracted features: 3000/6300
+    Extracted features: 3200/6300
+    Extracted features: 3400/6300
+    Extracted features: 3600/6300
+    Extracted features: 3800/6300
+    Extracted features: 4000/6300
+    Extracted features: 4200/6300
+    Extracted features: 4400/6300
+    Extracted features: 4600/6300
+    Extracted features: 4800/6300
+    Extracted features: 5000/6300
+    Extracted features: 5200/6300
+    Extracted features: 5400/6300
+    Extracted features: 5600/6300
+    Extracted features: 5800/6300
+    Extracted features: 6000/6300
+    Extracted features: 6200/6300
+    ✓ Feature extraction complete: (6300, 116)
+
+============================================================
+  TRANSFORMER (CPU, d_model=128, layers=3)
+============================================================
+    Fold 1/5...
+      Epoch  50: loss=0.7317  train_acc=0.733  val_acc=0.798
+      Epoch 100: loss=0.5323  train_acc=0.803  val_acc=0.828
+      Epoch 150: loss=0.4128  train_acc=0.855  val_acc=0.841
+      Epoch 200: loss=0.3209  train_acc=0.885  val_acc=0.840
+      Epoch 250: loss=0.2678  train_acc=0.912  val_acc=0.860
+      Epoch 300: loss=0.2368  train_acc=0.921  val_acc=0.872
+      Early stop at epoch 323 (patience=40)
+      → val_acc=0.874  test_acc=0.874
+    Fold 2/5...
+      Epoch  50: loss=0.7694  train_acc=0.725  val_acc=0.760
+      Epoch 100: loss=0.5534  train_acc=0.801  val_acc=0.798
+      Epoch 150: loss=0.4023  train_acc=0.859  val_acc=0.823
+      Early stop at epoch 179 (patience=40)
+      → val_acc=0.840  test_acc=0.840
+    Fold 3/5...
+      Epoch  50: loss=0.7854  train_acc=0.712  val_acc=0.770
+      Epoch 100: loss=0.5214  train_acc=0.812  val_acc=0.842
+      Epoch 150: loss=0.3989  train_acc=0.858  val_acc=0.848
+      Epoch 200: loss=0.3281  train_acc=0.893  val_acc=0.858
+      Epoch 250: loss=0.2400  train_acc=0.918  val_acc=0.862
+      Early stop at epoch 275 (patience=40)
+      → val_acc=0.871  test_acc=0.871
+    Fold 4/5...
+      Epoch  50: loss=0.7296  train_acc=0.727  val_acc=0.763
+      Epoch 100: loss=0.5251  train_acc=0.806  val_acc=0.820
+      Epoch 150: loss=0.3900  train_acc=0.857  val_acc=0.846
+      Epoch 200: loss=0.3084  train_acc=0.895  val_acc=0.846
+      Epoch 250: loss=0.2539  train_acc=0.910  val_acc=0.851
+      Early stop at epoch 293 (patience=40)
+      → val_acc=0.866  test_acc=0.866
+    Fold 5/5...
+      Epoch  50: loss=0.7316  train_acc=0.732  val_acc=0.801
+      Epoch 100: loss=0.5200  train_acc=0.810  val_acc=0.823
+      Epoch 150: loss=0.3922  train_acc=0.856  val_acc=0.848
+      Epoch 200: loss=0.3118  train_acc=0.888  val_acc=0.856
+      Early stop at epoch 228 (patience=40)
+      → val_acc=0.871  test_acc=0.871
+
+  Accuracy:  86.5%
+  Top-3:     98.7%
+  Top-5:     99.7%
+  Folds:     ['0.874', '0.840', '0.871', '0.866', '0.871']
+  Mean±Std:  0.865 ± 0.012
+  Time:      5558s
+  Saved → results/transformer_probs.npz
+
+  Loaded existing phase2 results (4 entries)
+
+  ⚠ Skipping ensemble (xgboost not installed)
+
+============================================================
+  📊 FULL RESULTS SUMMARY
+============================================================
+
+  ── Phase 1 ──
+    key36_RandomForest                   acc=74.0%  top3=94.0%
+    key36_SVM_RBF                        acc=78.3%  top3=96.7%
+    zone_hand                            acc=89.4%
+    zone_row                             acc=86.2%  top3=99.5%
+    zone_quadrant                        acc=86.1%  top3=99.5%
+
+  ── Phase 2 ──
+    dl_Transformer                       acc=86.5%  top3=98.7%  top5=99.7%
+    ensemble_prop                        acc=82.8%  top3=98.1%
+    ensemble_best                        acc=82.8%  top3=98.1%  top5=99.4%
+    xgb_standalone                       acc=69.5%
+
+  🏆 Best: dl_Transformer → 86.5%
+
+  Results saved → results/results_phase2.json
+
+============================================================
+  ✓ Done!
+============================================================
+

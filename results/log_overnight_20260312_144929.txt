@@ -1,0 +1,635 @@
+
+  Auto-discovered 13 'single_key' sessions across 2 data dir(s):
+    data/raw/single_key/p01_single_key_g1_20260312_001904
+    data/raw/single_key/p01_single_key_g2_20260309_164257
+    data/raw/single_key/p01_single_key_g2_20260312_003047
+    data/raw/single_key/p01_single_key_g3_20260309_165436
+    data/raw/single_key/p01_single_key_g3_20260312_005049
+    data/raw/single_key/p01_single_key_g4_20260309_170745
+    data/raw/single_key/p01_single_key_g4_20260312_011516
+    data/raw/single_key/p01_single_key_g5_20260312_012949
+    data/raw/single_key/p01_single_key_g6_20260309_172058
+    data/raw/single_key/p01_single_key_g6_20260312_014158
+    data/raw/single_key/p01_single_key_g7_20260309_184051
+    data/raw/boost/p01_single_key_g8_20260309_231753
+    data/raw/boost/p01_single_key_g8_20260312_030636
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/single_key/p01_single_key_g1_20260312_001904_sensor.csv
+    → 85119 sensor samples loaded
+  Loading key events from: data/raw/single_key/p01_single_key_g1_20260312_001904_events.csv
+    → 1199 key events loaded
+
+  Actual sampling rate:  196.8 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    600 press events found
+    ✓ 600 valid windows extracted & resampled
+    Raw window sizes: min=53, max=61, avg=59.9
+    After resampling: all → 57 samples
+
+  Samples per key:
+    'a': 100
+    'b': 100
+    'c': 100
+    'd': 100
+    'e': 100
+    'f': 100
+
+  ✓ Dataset saved: data/processed/p01_single_key_g1_20260312_001904_dataset.npz
+    X shape: (600, 57, 6)  (samples × timesteps × channels)
+    y shape: (600,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g1_20260312_001904_flat.csv
+    600 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/single_key/p01_single_key_g2_20260309_164257_sensor.csv
+    → 39203 sensor samples loaded
+  Loading key events from: data/raw/single_key/p01_single_key_g2_20260309_164257_events.csv
+    → 599 key events loaded
+
+  Actual sampling rate:  197.4 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    300 press events found
+    ✓ 300 valid windows extracted & resampled
+    Raw window sizes: min=48, max=61, avg=59.8
+    After resampling: all → 57 samples
+
+  Samples per key:
+    'g': 50
+    'h': 50
+    'i': 50
+    'j': 50
+    'k': 50
+    'l': 50
+
+  ✓ Dataset saved: data/processed/p01_single_key_g2_20260309_164257_dataset.npz
+    X shape: (300, 57, 6)  (samples × timesteps × channels)
+    y shape: (300,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g2_20260309_164257_flat.csv
+    300 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/single_key/p01_single_key_g2_20260312_003047_sensor.csv
+    → 84048 sensor samples loaded
+  Loading key events from: data/raw/single_key/p01_single_key_g2_20260312_003047_events.csv
+    → 1199 key events loaded
+
+  Actual sampling rate:  196.5 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    600 press events found
+    ✓ 600 valid windows extracted & resampled
+    Raw window sizes: min=45, max=61, avg=58.7
+    After resampling: all → 57 samples
+
+  Samples per key:
+    'g': 100
+    'h': 100
+    'i': 100
+    'j': 100
+    'k': 100
+    'l': 100
+
+  ✓ Dataset saved: data/processed/p01_single_key_g2_20260312_003047_dataset.npz
+    X shape: (600, 57, 6)  (samples × timesteps × channels)
+    y shape: (600,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g2_20260312_003047_flat.csv
+    600 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/single_key/p01_single_key_g3_20260309_165436_sensor.csv
+    → 40274 sensor samples loaded
+  Loading key events from: data/raw/single_key/p01_single_key_g3_20260309_165436_events.csv
+    → 600 key events loaded
+
+  Actual sampling rate:  197.5 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    300 press events found
+    ✓ 300 valid windows extracted & resampled
+    Raw window sizes: min=59, max=61, avg=59.9
+    After resampling: all → 57 samples
+
+  Samples per key:
+    'm': 50
+    'n': 50
+    'o': 50
+    'p': 50
+    'q': 50
+    'r': 50
+
+  ✓ Dataset saved: data/processed/p01_single_key_g3_20260309_165436_dataset.npz
+    X shape: (300, 57, 6)  (samples × timesteps × channels)
+    y shape: (300,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g3_20260309_165436_flat.csv
+    300 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/single_key/p01_single_key_g3_20260312_005049_sensor.csv
+    → 87648 sensor samples loaded
+  Loading key events from: data/raw/single_key/p01_single_key_g3_20260312_005049_events.csv
+    → 1200 key events loaded
+
+  Actual sampling rate:  196.2 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    600 press events found
+    ✓ 600 valid windows extracted & resampled
+    Raw window sizes: min=48, max=61, avg=58.7
+    After resampling: all → 57 samples
+
+  Samples per key:
+    'm': 100
+    'n': 100
+    'o': 100
+    'p': 100
+    'q': 100
+    'r': 100
+
+  ✓ Dataset saved: data/processed/p01_single_key_g3_20260312_005049_dataset.npz
+    X shape: (600, 57, 6)  (samples × timesteps × channels)
+    y shape: (600,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g3_20260312_005049_flat.csv
+    600 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/single_key/p01_single_key_g4_20260309_170745_sensor.csv
+    → 38440 sensor samples loaded
+  Loading key events from: data/raw/single_key/p01_single_key_g4_20260309_170745_events.csv
+    → 604 key events loaded
+
+  Actual sampling rate:  197.5 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    301 press events found
+    ✓ 301 valid windows extracted & resampled
+    Raw window sizes: min=49, max=61, avg=59.8
+    After resampling: all → 57 samples
+
+  Samples per key:
+    'capslock': 1
+    's': 50
+    't': 50
+    'u': 50
+    'v': 50
+    'w': 50
+    'x': 50
+
+  ✓ Dataset saved: data/processed/p01_single_key_g4_20260309_170745_dataset.npz
+    X shape: (301, 57, 6)  (samples × timesteps × channels)
+    y shape: (301,)  (labels)
+    Unique keys: 7
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g4_20260309_170745_flat.csv
+    301 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/single_key/p01_single_key_g4_20260312_011516_sensor.csv
+    → 85206 sensor samples loaded
+  Loading key events from: data/raw/single_key/p01_single_key_g4_20260312_011516_events.csv
+    → 1200 key events loaded
+
+  Actual sampling rate:  196.0 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    600 press events found
+    ✓ 600 valid windows extracted & resampled
+    Raw window sizes: min=44, max=61, avg=58.3
+    After resampling: all → 57 samples
+
+  Samples per key:
+    's': 100
+    't': 100
+    'u': 100
+    'v': 100
+    'w': 100
+    'x': 100
+
+  ✓ Dataset saved: data/processed/p01_single_key_g4_20260312_011516_dataset.npz
+    X shape: (600, 57, 6)  (samples × timesteps × channels)
+    y shape: (600,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g4_20260312_011516_flat.csv
+    600 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/single_key/p01_single_key_g5_20260312_012949_sensor.csv
+    → 96957 sensor samples loaded
+  Loading key events from: data/raw/single_key/p01_single_key_g5_20260312_012949_events.csv
+    → 1200 key events loaded
+
+  Actual sampling rate:  196.7 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    600 press events found
+    ✓ 600 valid windows extracted & resampled
+    Raw window sizes: min=54, max=61, avg=59.9
+    After resampling: all → 57 samples
+
+  Samples per key:
+    '0': 100
+    '1': 100
+    '2': 100
+    '3': 100
+    'y': 100
+    'z': 100
+
+  ✓ Dataset saved: data/processed/p01_single_key_g5_20260312_012949_dataset.npz
+    X shape: (600, 57, 6)  (samples × timesteps × channels)
+    y shape: (600,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g5_20260312_012949_flat.csv
+    600 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/single_key/p01_single_key_g6_20260309_172058_sensor.csv
+    → 39824 sensor samples loaded
+  Loading key events from: data/raw/single_key/p01_single_key_g6_20260309_172058_events.csv
+    → 600 key events loaded
+
+  Actual sampling rate:  197.5 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    300 press events found
+    ✓ 300 valid windows extracted & resampled
+    Raw window sizes: min=59, max=61, avg=59.9
+    After resampling: all → 57 samples
+
+  Samples per key:
+    '4': 50
+    '5': 50
+    '6': 50
+    '7': 50
+    '8': 50
+    '9': 50
+
+  ✓ Dataset saved: data/processed/p01_single_key_g6_20260309_172058_dataset.npz
+    X shape: (300, 57, 6)  (samples × timesteps × channels)
+    y shape: (300,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g6_20260309_172058_flat.csv
+    300 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/single_key/p01_single_key_g6_20260312_014158_sensor.csv
+    → 98187 sensor samples loaded
+  Loading key events from: data/raw/single_key/p01_single_key_g6_20260312_014158_events.csv
+    → 1200 key events loaded
+
+  Actual sampling rate:  196.2 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    600 press events found
+    ✓ 600 valid windows extracted & resampled
+    Raw window sizes: min=43, max=61, avg=58.3
+    After resampling: all → 57 samples
+
+  Samples per key:
+    '4': 100
+    '5': 100
+    '6': 100
+    '7': 100
+    '8': 100
+    '9': 100
+
+  ✓ Dataset saved: data/processed/p01_single_key_g6_20260312_014158_dataset.npz
+    X shape: (600, 57, 6)  (samples × timesteps × channels)
+    y shape: (600,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g6_20260312_014158_flat.csv
+    600 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/single_key/p01_single_key_g7_20260309_184051_sensor.csv
+    → 69151 sensor samples loaded
+  Loading key events from: data/raw/single_key/p01_single_key_g7_20260309_184051_events.csv
+    → 1200 key events loaded
+
+  Actual sampling rate:  197.5 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    600 press events found
+    ✓ 600 valid windows extracted & resampled
+    Raw window sizes: min=55, max=61, avg=59.9
+    After resampling: all → 57 samples
+
+  Samples per key:
+    ',': 100
+    '.': 100
+    'backspace': 100
+    'enter': 100
+    'shift': 100
+    'space': 100
+
+  ✓ Dataset saved: data/processed/p01_single_key_g7_20260309_184051_dataset.npz
+    X shape: (600, 57, 6)  (samples × timesteps × channels)
+    y shape: (600,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g7_20260309_184051_flat.csv
+    600 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/boost/p01_single_key_g8_20260309_231753_sensor.csv
+    → 37193 sensor samples loaded
+  Loading key events from: data/raw/boost/p01_single_key_g8_20260309_231753_events.csv
+    → 600 key events loaded
+
+  Actual sampling rate:  196.0 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    300 press events found
+    ✓ 300 valid windows extracted & resampled
+    Raw window sizes: min=45, max=61, avg=59.8
+    After resampling: all → 57 samples
+
+  Samples per key:
+    'd': 50
+    'f': 50
+    'h': 50
+    'j': 50
+    'm': 50
+    'n': 50
+
+  ✓ Dataset saved: data/processed/p01_single_key_g8_20260309_231753_dataset.npz
+    X shape: (300, 57, 6)  (samples × timesteps × channels)
+    y shape: (300,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g8_20260309_231753_flat.csv
+    300 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  PREPROCESSOR
+============================================================
+  Loading sensor data from: data/raw/boost/p01_single_key_g8_20260312_030636_sensor.csv
+    → 88160 sensor samples loaded
+  Loading key events from: data/raw/boost/p01_single_key_g8_20260312_030636_events.csv
+    → 1200 key events loaded
+
+  Actual sampling rate:  196.8 Hz
+  Target resample rate:  190 Hz
+  Window: 100ms + 200ms = 300ms
+  Output window size:    57 samples (fixed)
+
+  Extracting keystroke windows...
+    Target: 57 samples per window (100+200ms @ 190Hz)
+    600 press events found
+    ✓ 600 valid windows extracted & resampled
+    Raw window sizes: min=47, max=61, avg=59.9
+    After resampling: all → 57 samples
+
+  Samples per key:
+    'd': 100
+    'f': 100
+    'h': 100
+    'j': 100
+    'm': 100
+    'n': 100
+
+  ✓ Dataset saved: data/processed/p01_single_key_g8_20260312_030636_dataset.npz
+    X shape: (600, 57, 6)  (samples × timesteps × channels)
+    y shape: (600,)  (labels)
+    Unique keys: 6
+
+  ✓ Flat CSV saved: data/processed/p01_single_key_g8_20260312_030636_flat.csv
+    600 rows × 345 columns
+
+============================================================
+  ✓ Preprocessing complete!
+  All windows resampled to 57 samples @ 190Hz
+  Sessions with different raw rates are now compatible.
+============================================================
+
+
+============================================================
+  MERGING 13 datasets...
+============================================================
+    + p01_single_key_g1_20260312_001904_dataset.npz: 600 samples
+    + p01_single_key_g2_20260309_164257_dataset.npz: 300 samples
+    + p01_single_key_g2_20260312_003047_dataset.npz: 600 samples
+    + p01_single_key_g3_20260309_165436_dataset.npz: 300 samples
+    + p01_single_key_g3_20260312_005049_dataset.npz: 600 samples
+    + p01_single_key_g4_20260309_170745_dataset.npz: 301 samples
+    + p01_single_key_g4_20260312_011516_dataset.npz: 600 samples
+    + p01_single_key_g5_20260312_012949_dataset.npz: 600 samples
+    + p01_single_key_g6_20260309_172058_dataset.npz: 300 samples
+    + p01_single_key_g6_20260312_014158_dataset.npz: 600 samples
+    + p01_single_key_g7_20260309_184051_dataset.npz: 600 samples
+    + p01_single_key_g8_20260309_231753_dataset.npz: 300 samples
+    + p01_single_key_g8_20260312_030636_dataset.npz: 600 samples
+
+  ✓ Merged dataset: data/processed/merged_dataset.npz
+    X shape: (6301, 57, 6)
+    Unique keys: 43 → , . 0 1 2 3 4 5 6 7 8 9 a b backspace c capslock d e enter f g h i j k l m n o p q r s shift space t u v w x y z
+    Samples per key (min/max): 1/300
+    All sessions resampled to 190Hz ✓
+============================================================
+
+  ⚠ xgboost not installed — ensemble will be skipped
+  MPS available: True
+  Transformer will run on: cpu
+
+============================================================
+  🤖 TRANSFORMER-ONLY RUNNER
+============================================================
+  ⚠ 过滤低样本键: ['capslock']
+
+  Data: (6300, 57, 6), 42 classes, 190Hz
+  Loaded cached features: (6300, 116)
+
+============================================================
+  TRANSFORMER (CPU, d_model=128, layers=3)
+============================================================
+    Fold 1/5...
+      Epoch  50: loss=0.7506  train_acc=0.728  val_acc=0.785
+      Epoch 100: loss=0.5175  train_acc=0.808  val_acc=0.805
+      Epoch 150: loss=0.3952  train_acc=0.855  val_acc=0.833
+      Epoch 200: loss=0.3079  train_acc=0.895  val_acc=0.846
+      Epoch 250: loss=0.2400  train_acc=0.914  val_acc=0.833
+      Early stop at epoch 259 (patience=40)
+      → val_acc=0.852  test_acc=0.852
+    Fold 2/5...
+      Epoch  50: loss=0.7442  train_acc=0.730  val_acc=0.742
+      Epoch 100: loss=0.5209  train_acc=0.814  val_acc=0.825
+      Epoch 150: loss=0.3917  train_acc=0.856  val_acc=0.841
+      Epoch 200: loss=0.3048  train_acc=0.896  val_acc=0.848
+      Epoch 250: loss=0.2452  train_acc=0.916  val_acc=0.856
+      Early stop at epoch 298 (patience=40)
+      → val_acc=0.871  test_acc=0.871
+    Fold 3/5...
+      Epoch  50: loss=0.7434  train_acc=0.731  val_acc=0.783
+      Epoch 100: loss=0.5351  train_acc=0.804  val_acc=0.813

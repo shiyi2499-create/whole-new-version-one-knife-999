@@ -1,0 +1,126 @@
+{
+  "sessions": [
+    "p01_free_type_part1_20260309_194323",
+    "p01_free_type_part2_20260309_194741"
+  ],
+  "alpha": 0.15,
+  "beam": 100,
+  "metrics": {
+    "total_sentences": 27,
+    "perfect_sentences": 0,
+    "sentence_accuracy": 0.0,
+    "total_words": 242,
+    "correct_words": 2,
+    "word_accuracy": 0.008264462809917356
+  },
+  "sentences": [
+    {
+      "original": "the quick brown fox jumps over the lazy dog",
+      "decoded": "nnn nnifk nmonk fff kkmkf ixmm hhv mnfh mmj"
+    },
+    {
+      "original": "pack my box with five dozen liquor jugs",
+      "decoded": "ijnj mm hmh jjhm ffhx nunun uinlmn muxm"
+    },
+    {
+      "original": "how vexingly quick daft zebras jump",
+      "decoded": "xjm hhxnnxkn njhmm fnmu mjxnnj mkko"
+    },
+    {
+      "original": "the five boxing wizards jump quickluy",
+      "decoded": "nnm hjhn nmfkxx jkfjxdd knnk hpkmmkjh"
+    },
+    {
+      "original": "sphinx of black quartz judge my vow",
+      "decoded": "jkmkhf in lknhm fmqlkf ipnhf my hfh"
+    },
+    {
+      "original": "i need to buy some groceries forom the store toady",
+      "decoded": "? minh mi nit minh njkffmmyn mkmmm mmm jukfx njjxn"
+    },
+    {
+      "original": "i need to buy some groceries freom the store toadyday",
+      "decoded": "? nhfx mm mmm minh nnknjhiff hijom mmm nuimj nohnmyxn"
+    },
+    {
+      "original": "please send me the report beforee friday afternoon",
+      "decoded": "kmjnhi qnnq mm nnn xnlkfn nhjkhjm hfndni nfnnfxunn"
+    },
+    {
+      "original": "she walked quickly through the park and sat on a bench",
+      "decoded": "hmm qqkkuu gnmmmkm tnmiunn hmm pjkm mmm min um ? nnmnn"
+    },
+    {
+      "original": "we shlould meet at the coggffere shop around noon",
+      "decoded": "hx hmijkmm jnnn fn hmm minnhnjnn vnpp jnmnhf mkkn"
+    },
+    {
+      "original": "the waeather forecatst wsays it will rain tomorrow morining",
+      "decoded": "nmn nnfxhfun gijjxfnxh fflmd in jjkm hfmn ukmkfjki minkjmhh"
+    },
+    {
+      "original": "can you help me fix this problem with my computer",
+      "decoded": "fhn mmm niik jh hjf tnmf krijifk jjjn in fkjknumi"
+    },
+    {
+      "original": "he gfishnished reading the entire book in just two days",
+      "decoded": "hn hjknjmjnnnn hddfjjn nnm hnhjjh nikk jj knhn nki hfnn"
+    },
+    {
+      "original": "my favorite subjtect in school was always mathematics",
+      "decoded": "jh hhhiiihh mujjhjnn kj hnjkkk nxv jihhgg jjyjdjigjff"
+    },
+    {
+      "original": "they decided to travel across europe during the summer",
+      "decoded": "hhgj fhhifff hi hjjjhi dfjifg gkhkof gigjnn him jjmnhf"
+    },
+    {
+      "original": "the project dedadline has been extended until next wekek",
+      "decoded": "hnh iiijhjt ghhjfjujn jnn mhnn jfuxnbjy knjim mjyy hiuhk"
+    },
+    {
+      "original": "my phone number is 8675309 please call me back",
+      "decoded": "nh kmknh jniqhg in fkhkiif kmfgfg xhjj jn jghj"
+    },
+    {
+      "original": "the meeting is scheduled for 3 pm on march 14 2026",
+      "decoded": "hmm jhhhjnh ij ffjjhjign hin ? in in mijxx ij fjnj"
+    },
+    {
+      "original": "rooom 207 is on the 2nd floor of building 5",
+      "decoded": "fimkj kin ij mm ing hng nkoih in nkomgkxx ?"
+    },
+    {
+      "original": "the password requieres at least 8 characters and 2 digits",
+      "decoded": "hmm ijhhhkgi hhhiifgfx ij mhdfi ? jnjhhxmhif mmm ? hjhihn"
+    },
+    {
+      "original": "flight 492 depatrts at 6 am from gate 17",
+      "decoded": "hjihnj mij ghihuhmk hi ? mm hfin hnhg fm"
+    },
+    {
+      "original": "order number 30518 was shipped on juanuary 9 2026",
+      "decoded": "mfhhh hkjxhg iiijg inn jnkkihn in mmjjkijj ? riff"
+    },
+    {
+      "original": "the zip code for downtown is 10001",
+      "decoded": "hhx him jmij him fgmktmnn in yffij"
+    },
+    {
+      "original": "add 250 ngrams of flour and 3 eggs to the mixture",
+      "decoded": "hmm kui mhhmmh ij voiih mmm ? hing mm mmm mmngknm"
+    },
+    {
+      "original": "chapter 7 starts on page 143 of the textbook",
+      "decoded": "hnhihkj ? ihjhgg ij kfgj jig mm hmm hfffjiok"
+    },
+    {
+      "original": "the finla al score was 96 to 84 in overtime",
+      "decoded": "hnh jknmf mm hfidf hff du di fi in kxhhmmmk"
+    },
+    {
+      "original": "apartment 4b is loaccated at 123 elm street",
+      "decoded": "jkjhhmmnu in in kjnhmjhmn mn him mkm njnfhn"
+    }
+  ]
+}

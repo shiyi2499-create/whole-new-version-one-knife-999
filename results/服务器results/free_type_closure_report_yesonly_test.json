@@ -1,0 +1,356 @@
+{
+  "free_type_data_quality": {
+    "prompt_templates_total": 208,
+    "recorded_attempts": 147,
+    "completed_yes": 130,
+    "retry_no": 17,
+    "missing_vs_template": 78,
+    "valid_sessions": [
+      {
+        "session": "p01_free_type_part10_20260311_160528",
+        "effective_hz": 146.4147254558269,
+        "median_hz": 131.5926607088528,
+        "hz_p01": 98.11193644849241,
+        "hz_p99": 464.1539746598532,
+        "press_count": 608,
+        "prompts_rows": 15,
+        "prompts_yes_rows": 13,
+        "prompts_no_rows": 2,
+        "reconstructed_sentences": 15,
+        "align_to_typed": "15/15",
+        "windows_extracted": 608,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      },
+      {
+        "session": "p01_free_type_part1_20260310_220016",
+        "effective_hz": 146.0355373580656,
+        "median_hz": 131.5407226728923,
+        "hz_p01": 98.03815659237085,
+        "hz_p99": 446.81319991438653,
+        "press_count": 741,
+        "prompts_rows": 15,
+        "prompts_yes_rows": 13,
+        "prompts_no_rows": 2,
+        "reconstructed_sentences": 15,
+        "align_to_typed": "15/15",
+        "windows_extracted": 741,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      },
+      {
+        "session": "p01_free_type_part2_20260310_220643",
+        "effective_hz": 146.21848468093154,
+        "median_hz": 131.58544007105613,
+        "hz_p01": 98.0904345699281,
+        "hz_p99": 447.0317663102248,
+        "press_count": 635,
+        "prompts_rows": 13,
+        "prompts_yes_rows": 13,
+        "prompts_no_rows": 0,
+        "reconstructed_sentences": 13,
+        "align_to_typed": "13/13",
+        "windows_extracted": 635,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      },
+      {
+        "session": "p01_free_type_part3_20260310_222748",
+        "effective_hz": 146.09133252366306,
+        "median_hz": 131.60637690802926,
+        "hz_p01": 98.10025366499963,
+        "hz_p99": 437.766798244784,
+        "press_count": 913,
+        "prompts_rows": 15,
+        "prompts_yes_rows": 13,
+        "prompts_no_rows": 2,
+        "reconstructed_sentences": 15,
+        "align_to_typed": "15/15",
+        "windows_extracted": 913,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      },
+      {
+        "session": "p01_free_type_part4_20260310_223921",
+        "effective_hz": 199.53135281997717,
+        "median_hz": 197.24025381664822,
+        "hz_p01": 130.83058728626864,
+        "hz_p99": 399.2766106568288,
+        "press_count": 798,
+        "prompts_rows": 17,
+        "prompts_yes_rows": 13,
+        "prompts_no_rows": 4,
+        "reconstructed_sentences": 17,
+        "align_to_typed": "17/17",
+        "windows_extracted": 798,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      },
+      {
+        "session": "p01_free_type_part5_20260311_012421",
+        "effective_hz": 147.1512291305962,
+        "median_hz": 131.6532968355287,
+        "hz_p01": 98.0213827141897,
+        "hz_p99": 442.283618696265,
+        "press_count": 690,
+        "prompts_rows": 17,
+        "prompts_yes_rows": 13,
+        "prompts_no_rows": 4,
+        "reconstructed_sentences": 17,
+        "align_to_typed": "17/17",
+        "windows_extracted": 690,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      },
+      {
+        "session": "p01_free_type_part6_20260311_013214",
+        "effective_hz": 146.71896045214868,
+        "median_hz": 131.6576127920643,
+        "hz_p01": 98.0138502787524,
+        "hz_p99": 441.09933673768364,
+        "press_count": 675,
+        "prompts_rows": 16,
+        "prompts_yes_rows": 13,
+        "prompts_no_rows": 3,
+        "reconstructed_sentences": 16,
+        "align_to_typed": "16/16",
+        "windows_extracted": 675,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      },
+      {
+        "session": "p01_free_type_part7_20260311_151551",
+        "effective_hz": 149.27608824271266,
+        "median_hz": 131.6706317082895,
+        "hz_p01": 98.12836290485635,
+        "hz_p99": 463.70532083307444,
+        "press_count": 544,
+        "prompts_rows": 13,
+        "prompts_yes_rows": 13,
+        "prompts_no_rows": 0,
+        "reconstructed_sentences": 13,
+        "align_to_typed": "13/13",
+        "windows_extracted": 544,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      },
+      {
+        "session": "p01_free_type_part8_20260311_151944",
+        "effective_hz": 147.57936729415636,
+        "median_hz": 131.5537098277725,
+        "hz_p01": 98.12098317225139,
+        "hz_p99": 455.2507087754137,
+        "press_count": 534,
+        "prompts_rows": 13,
+        "prompts_yes_rows": 13,
+        "prompts_no_rows": 0,
+        "reconstructed_sentences": 13,
+        "align_to_typed": "13/13",
+        "windows_extracted": 534,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      },
+      {
+        "session": "p01_free_type_part9_20260311_154814",
+        "effective_hz": 199.52351847925058,
+        "median_hz": 197.3464987161854,
+        "hz_p01": 130.97544681247075,
+        "hz_p99": 442.51039670433835,
+        "press_count": 508,
+        "prompts_rows": 13,
+        "prompts_yes_rows": 13,
+        "prompts_no_rows": 0,
+        "reconstructed_sentences": 13,
+        "align_to_typed": "13/13",
+        "windows_extracted": 508,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      }
+    ],
+    "dropped_sessions": [],
+    "overview": {
+      "sentence_count": 130,
+      "sentence_attempt_count": 147,
+      "sentence_yes_count": 130,
+      "sentence_no_count": 17,
+      "total_presses": 6646,
+      "total_windows": 6646,
+      "imputed_window_count": 0,
+      "valid_sample_rate": 1.0,
+      "alpha_coverage_count": 26,
+      "alpha_coverage": "abcdefghijklmnopqrstuvwxyz",
+      "digit_coverage_count": 10,
+      "digit_coverage": "0123456789",
+      "space_count": 1135,
+      "enter_count": 147,
+      "backspace_count": 115
+    }
+  },
+  "artifacts": {
+    "free_type_dataset": "data/processed/free_type_dataset.npz",
+    "model_path": "results/transformer_freetype_finetuned.pt",
+    "scaler_path": "results/transformer_scaler.npz",
+    "report_path": "results/服务器results/free_type_closure_report_yesonly_test.json",
+    "evaluation_mode": "yes_only"
+  },
+  "keystroke_metrics": {
+    "uncalibrated": {
+      "n_eval": 5882,
+      "top1": 0.23852431145868752,
+      "top3": 0.435226113566814,
+      "top5": 0.5639238354301258
+    },
+    "calibrated": {
+      "n_eval": 5882,
+      "top1": 0.2679360761645699,
+      "top3": 0.4693981638898334,
+      "top5": 0.5890853451207072
+    }
+  },
+  "calibration": {
+    "temperature": 3.000000000000002,
+    "prior_weight": 1.0,
+    "special_weight": 0.7,
+    "special_bias": {
+      "0": 0.36944259753584024,
+      "1": 0.6744722695604346,
+      "2": 0.7725759505330302,
+      "3": 0.6702988158012161,
+      "4": 0.5416350442622188,
+      "5": 0.5620912695823955,
+      "6": 0.734097006385066,
+      "7": 0.753633683536889,
+      "8": 0.5639509927758298,
+      "9": 0.27809972925178233,
+      "backspace": 0.38603996492151843,
+      "space": -0.10458012220389969
+    },
+    "temperature_fit_nll": 3.2246430566044295
+  },
+  "decoder": {
+    "open_vocab_grid": [
+      {
+        "beam": 20,
+        "alpha": 0.15,
+        "wer": 0.9645075421472937,
+        "cer": 0.6191420331651045,
+        "sem": 0.0
+      }
+    ],
+    "open_vocab_best_config": {
+      "beam": 20,
+      "alpha": 0.15
+    },
+    "open_vocab_metrics": {
+      "sentence_count": 130,
+      "sentence_exact_match": 0.0,
+      "cer": 0.6191420331651045,
+      "wer": 0.9645075421472937,
+      "char_edits": 3435,
+      "char_ref_len": 5548,
+      "word_edits": 1087,
+      "word_ref_len": 1127
+    },
+    "prompt_vocab_metrics": {
+      "sentence_count": 130,
+      "sentence_exact_match": 0.0,
+      "cer": 0.5607426099495314,
+      "wer": 0.8482697426796806,
+      "char_edits": 3111,
+      "char_ref_len": 5548,
+      "word_edits": 956,
+      "word_ref_len": 1127
+    },
+    "prompt_constrained_metrics": {
+      "sentence_count": 130,
+      "sentence_exact_match": 0.6538461538461539,
+      "cer": 0.25504686373467916,
+      "wer": 0.3318544809228039,
+      "char_edits": 1415,
+      "char_ref_len": 5548,
+      "word_edits": 374,
+      "word_ref_len": 1127
+    },
+    "raw_argmax_metrics": {
+      "sentence_count": 130,
+      "sentence_exact_match": 0.0,
+      "cer": 0.8031723143475126,
+      "wer": 1.028393966282165,
+      "char_edits": 4456,
+      "char_ref_len": 5548,
+      "word_edits": 1159,
+      "word_ref_len": 1127
+    },
+    "examples": [
+      {
+        "session": "p01_free_type_part3_20260310_222748",
+        "sentence_idx": 9,
+        "reference": "the concert tickets cost 75 dollars each and we need 4 of them",
+        "raw_argmax": "s e r9tae t uoooete epet eoopeee ec9e e e ee eee eoor tteui",
+        "decoder_open": "see retreat toilets sort oe rooster earn ere ea tree ? or stet",
+        "decoder_prompt_constrained": "the concert tickets cost 75 dollars each and we need 4 of them"
+      },
+      {
+        "session": "p01_free_type_part3_20260310_222748",
+        "sentence_idx": 5,
+        "reference": "working from home has become much more common since 2020 and many people prefer it",
+        "raw_argmax": "eoe. eep tute eee desse tcd toaa oo moy eo eedeoeo see gnn oeoooe peeeeetp",
+        "decoder_open": "toeless eros site see create sure tore tornit enter sore see test people seesee it",
+        "decoder_prompt_constrained": "working from home has become much more common since 2020 and many people prefer it"
+      },
+      {
+        "session": "p01_free_type_part4_20260310_223921",
+        "sentence_idx": 0,
+        "reference": "our backup window starts at 2 am and ends at 4 am",
+        "raw_argmax": "pie deeiuleeie0teoe eteete st",
+        "decoder_open": "roe areito elaeis ensete et ? et ere snee tt ? et",
+        "decoder_prompt_constrained": "apartment 4b is located at 123 elm street"
+      },
+      {
+        "session": "p01_free_type_part10_20260311_160528",
+        "sentence_idx": 0,
+        "reference": "grocery list has 2 apples 3 bananas and 1 melon",
+        "raw_argmax": "namaeei leet aae e eoolee 1 c sa ydehqnini",
+        "decoder_open": "teneral reet are ? epopee ? benshee tee ? merit",
+        "decoder_prompt_constrained": "there are exactly 365 days in a regular year"
+      },
+      {
+        "session": "p01_free_type_part10_20260311_160528",
+        "sentence_idx": 1,
+        "reference": "receipt 9007 shows total 48 for week 2",
+        "raw_argmax": "eqapaaiot oeon etoe tote rudeoeteee r",
+        "decoder_open": "eyeroot peon aloes toter ro roe rees ?",
+        "decoder_prompt_constrained": "receipt 9007 shows total 48 for week 2"
+      }
+    ]
+  },
+  "judgement": {
+    "bring_up_with_39_or_less": "sufficient",
+    "lightweight_calibration_with_current_data": "borderline_but_usable",
+    "train_from_scratch_free_type_model": "insufficient"
+  },
+  "comparison_with_baseline": {
+    "baseline_report_path": "results/free_type_closure_report_27sent.json",
+    "baseline_sentence_count": 27,
+    "current_sentence_count": 130,
+    "keystroke_calibrated": {
+      "top1_before": 0.11379050489826677,
+      "top1_after": 0.2679360761645699,
+      "top1_delta": 0.15414557126630313,
+      "top3_before": 0.2569706103993971,
+      "top3_after": 0.4693981638898334,
+      "top3_delta": 0.2124275534904363,
+      "top5_before": 0.35116804822908815,
+      "top5_after": 0.5890853451207072,
+      "top5_delta": 0.23791729689161906
+    },
+    "decoder_open_vocab": {
+      "cer_before": 0.7560581583198708,
+      "cer_after": 0.6191420331651045,
+      "cer_delta": -0.13691612515476626,
+      "wer_before": 0.995850622406639,
+      "wer_after": 0.9645075421472937,
+      "wer_delta": -0.03134308025934529
+    }
+  }
+}

@@ -1,0 +1,247 @@
+{
+  "free_type_data_quality": {
+    "prompt_templates_total": 39,
+    "recorded_sentences": 27,
+    "missing_vs_template": 12,
+    "valid_sessions": [
+      {
+        "session": "p01_free_type_part1_20260309_194323",
+        "effective_hz": 193.87286215052632,
+        "median_hz": 196.8762433965247,
+        "hz_p01": 98.78290764880812,
+        "hz_p99": 397.3681205303545,
+        "press_count": 694,
+        "prompts_rows": 14,
+        "reconstructed_sentences": 14,
+        "align_to_typed": "14/14",
+        "windows_extracted": 694,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      },
+      {
+        "session": "p01_free_type_part2_20260309_194741",
+        "effective_hz": 199.53750029712947,
+        "median_hz": 197.41387819563715,
+        "hz_p01": 130.95329302741152,
+        "hz_p99": 394.78239791618057,
+        "press_count": 633,
+        "prompts_rows": 13,
+        "reconstructed_sentences": 13,
+        "align_to_typed": "13/13",
+        "windows_extracted": 633,
+        "valid_sample_rate": 1.0,
+        "issues": []
+      }
+    ],
+    "dropped_sessions": [],
+    "overview": {
+      "sentence_count": 27,
+      "total_presses": 1327,
+      "total_windows": 1327,
+      "valid_sample_rate": 1.0,
+      "alpha_coverage_count": 26,
+      "alpha_coverage": "abcdefghijklmnopqrstuvwxyz",
+      "digit_coverage_count": 10,
+      "digit_coverage": "0123456789",
+      "space_count": 215,
+      "enter_count": 27,
+      "backspace_count": 31
+    }
+  },
+  "artifacts": {
+    "free_type_dataset": "data/processed/free_type_dataset.npz",
+    "report_path": "results/free_type_closure_report.json"
+  },
+  "keystroke_metrics": {
+    "uncalibrated": {
+      "n_eval": 1327,
+      "top1": 0.05651846269781462,
+      "top3": 0.15599095704596835,
+      "top5": 0.24039186134137153
+    },
+    "calibrated": {
+      "n_eval": 1327,
+      "top1": 0.11379050489826677,
+      "top3": 0.2569706103993971,
+      "top5": 0.35116804822908815
+    }
+  },
+  "calibration": {
+    "temperature": 3.000000000000002,
+    "prior_weight": 1.0,
+    "special_weight": 0.7,
+    "special_bias": {
+      "0": 1.0713255767670005,
+      "1": 1.7972315841630198,
+      "2": 1.9692521599002657,
+      "3": 1.4591699559705154,
+      "4": 1.3748522789882678,
+      "5": 0.7131069173272457,
+      "6": -0.038112402881990505,
+      "7": -0.2504865107817235,
+      "8": -0.041056838492700844,
+      "9": 0.70016264051547,
+      "backspace": -0.11514740532125019,
+      "space": -0.380074120282626
+    },
+    "temperature_fit_nll": 5.496293204558229
+  },
+  "decoder": {
+    "open_vocab_grid": [
+      {
+        "beam": 50,
+        "alpha": 0.05,
+        "wer": 0.995850622406639,
+        "cer": 0.7560581583198708,
+        "sem": 0.0
+      },
+      {
+        "beam": 50,
+        "alpha": 0.15,
+        "wer": 0.995850622406639,
+        "cer": 0.7560581583198708,
+        "sem": 0.0
+      },
+      {
+        "beam": 50,
+        "alpha": 0.3,
+        "wer": 0.995850622406639,
+        "cer": 0.7560581583198708,
+        "sem": 0.0
+      },
+      {
+        "beam": 100,
+        "alpha": 0.05,
+        "wer": 0.995850622406639,
+        "cer": 0.7560581583198708,
+        "sem": 0.0
+      },
+      {
+        "beam": 100,
+        "alpha": 0.15,
+        "wer": 0.995850622406639,
+        "cer": 0.7560581583198708,
+        "sem": 0.0
+      },
+      {
+        "beam": 100,
+        "alpha": 0.3,
+        "wer": 0.995850622406639,
+        "cer": 0.7560581583198708,
+        "sem": 0.0
+      },
+      {
+        "beam": 150,
+        "alpha": 0.05,
+        "wer": 0.995850622406639,
+        "cer": 0.7560581583198708,
+        "sem": 0.0
+      },
+      {
+        "beam": 150,
+        "alpha": 0.15,
+        "wer": 0.995850622406639,
+        "cer": 0.7560581583198708,
+        "sem": 0.0
+      },
+      {
+        "beam": 150,
+        "alpha": 0.3,
+        "wer": 0.995850622406639,
+        "cer": 0.7560581583198708,
+        "sem": 0.0
+      }
+    ],
+    "open_vocab_best_config": {
+      "beam": 50,
+      "alpha": 0.05
+    },
+    "open_vocab_metrics": {
+      "sentence_count": 27,
+      "sentence_exact_match": 0.0,
+      "cer": 0.7560581583198708,
+      "wer": 0.995850622406639,
+      "char_edits": 936,
+      "char_ref_len": 1238,
+      "word_edits": 240,
+      "word_ref_len": 241
+    },
+    "prompt_vocab_metrics": {
+      "sentence_count": 27,
+      "sentence_exact_match": 0.0,
+      "cer": 0.7568659127625202,
+      "wer": 0.9875518672199171,
+      "char_edits": 937,
+      "char_ref_len": 1238,
+      "word_edits": 238,
+      "word_ref_len": 241
+    },
+    "prompt_constrained_metrics": {
+      "sentence_count": 27,
+      "sentence_exact_match": 0.5555555555555556,
+      "cer": 0.34975767366720517,
+      "wer": 0.43568464730290457,
+      "char_edits": 433,
+      "char_ref_len": 1238,
+      "word_edits": 105,
+      "word_ref_len": 241
+    },
+    "raw_argmax_metrics": {
+      "sentence_count": 27,
+      "sentence_exact_match": 0.0,
+      "cer": 0.9192245557350566,
+      "wer": 1.0,
+      "char_edits": 1138,
+      "char_ref_len": 1238,
+      "word_edits": 241,
+      "word_ref_len": 241
+    },
+    "examples": [
+      {
+        "session": "p01_free_type_part2_20260309_194741",
+        "sentence_idx": 9,
+        "reference": "add 250 grams of flour and 3 eggs to the mixture",
+        "raw_argmax": "jh",
+        "decoder_open": "nnn iui nhrmmh oh noiih nnn ? high on nnn mmniinm",
+        "decoder_prompt_constrained": "version 2 point 0 was released on october 15"
+      },
+      {
+        "session": "p01_free_type_part2_20260309_194741",
+        "sentence_idx": 3,
+        "reference": "the meeting is scheduled for 3 pm on march 14 2026",
+        "raw_argmax": "jmnjjhhhjn nijnfj7hji7nnhj,n5ki,jkmn,ij ,jjjjnjm",
+        "decoder_open": "hnn nhhhnnh in fhhihniin him ? in in niisx in rhnk",
+        "decoder_prompt_constrained": "he finished reading the entire book in just two days"
+      },
+      {
+        "session": "p01_free_type_part1_20260309_194323",
+        "sentence_idx": 8,
+        "reference": "she walked quickly through the park and sat on a bench",
+        "raw_argmax": "n,h.,,gnmmm., tnmiunn , pj,,.mn ,n,,. ,, m",
+        "decoder_open": "nnh rrkkiu inmrmkn tnmounn hnn oimm nnn rin in ? nnmnn",
+        "decoder_prompt_constrained": "the final score was 96 to 84 in overtime"
+      },
+      {
+        "session": "p01_free_type_part2_20260309_194741",
+        "sentence_idx": 2,
+        "reference": "my phone number is 8675309 please call me back",
+        "raw_argmax": "nhhk,knhjjnhgjjhkhkii7km88jhjjjjnnjghj",
+        "decoder_open": "nh imknn nnihhg in fkhiiid kmfgfg nhii nn ighn",
+        "decoder_prompt_constrained": "my favorite subject in school was always mathematics"
+      },
+      {
+        "session": "p01_free_type_part1_20260309_194323",
+        "sentence_idx": 0,
+        "reference": "the quick brown fox jumps over the lazy dog",
+        "raw_argmax": "nnnn,i., ,k,n.k,,. ,h ,m ,mj.",
+        "decoder_open": "nnn nnodk nnoim frr ikmkh ixmr hhn mnfh mmn",
+        "decoder_prompt_constrained": "the quick brown fox jumps over the lazy dog"
+      }
+    ]
+  },
+  "judgement": {
+    "bring_up_with_39_or_less": "sufficient",
+    "lightweight_calibration_with_current_data": "borderline_but_usable",
+    "train_from_scratch_free_type_model": "insufficient"
+  }
+}

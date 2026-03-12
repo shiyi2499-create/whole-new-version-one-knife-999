@@ -1,0 +1,17 @@
+Session: p01_single_key_g3_20260309_165436
+Mode: single_key
+Group: 3 - Group 3 (m-r)
+Keys in group: m n o p q r
+Participant: p01
+Start: 2026-03-09T16:54:36.625091
+End: 2026-03-09T16:57:58.435198
+Duration: 201.8s
+Total sensor samples: 40274
+Total key events: 600
+Rate drop detected: False
+Session valid: True
+Sampling rate - min: 183.1 Hz
+Sampling rate - max: 209.4 Hz
+Sampling rate - avg: 199.5 Hz
+Sensor CSV: data/raw/round2/p01_single_key_g3_20260309_165436_sensor.csv
+Events CSV: data/raw/round2/p01_single_key_g3_20260309_165436_events.csv

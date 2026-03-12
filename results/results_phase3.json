@@ -1,0 +1,9 @@
+{
+  "n_words": 500,
+  "raw_acc": 0.362,
+  "beam1_acc": 0.892,
+  "lm_acc": 0.886,
+  "top3_acc": 0.918,
+  "top5_acc": 0.92,
+  "lm_gain": 0.524
+}
