@@ -1,0 +1,17 @@
+prompt_index,timestamp_ns,prompt_text,typed_text,match
+0,15689928000,open ticket 3201 and assign it to user 18,open ticket 3201 and assign it to user 18,YES
+1,43984944750,api server 4 handled 920 requests in 5 minutes,api server 4 handled 920 requested in 5 minutes,NO
+1,75811403000,api server 4 handled 920 requests in 5 minutes,api server 4 handled 920 requests in 5 minutes,YES
+2,112160978041,node 7 used 63 percent memory at 11 05,node 7 used 63,NO
+2,123251237041,node 7 used 63 percent memory at 11 05,node 7 used 63 percent memory at 11 05,YES
+3,146930194750,cache hit rate reached 97 on run 2,cache hit rate reached 97 on run 2,YES
+4,171242099166,deploy build 41 to stage at 6 45 pm,deploy build 41 to stage at 6 45 pm,YES
+5,197480529541,database shard 3 stored 240000 rows today,database shard 3 stored 240000 rows today,YES
+6,227437217000,rotate logs every 12 hours on host 9,rotate logs every 12 hours on host 9,YES
+7,250130045125,alert rule 15 triggers when cpu stays above 90,alert rule 15 triggers when cpu stays above 90,YES
+8,284542242500,session 88 expired after 30 idle minutes,session,NO
+8,290470746333,session 88 expired after 30 idle minutes,session 88 expired after 30 idle minutes,YES
+9,318527579416,queue depth dropped from 44 to 6 overnight,queue depth dropped from 44 to 6 overnight,YES
+10,356795011833,latency stayed near 23 ms during test 4,latency stayed near 23 ms during test 4,YES
+11,383495675000,service 10 restarted 2 times after patch 1,service 10 restarted 2 times after patch 1,YES
+12,413639223833,monitor panel 5 shows green status for all pods,monitor panel 5 shows green status for all pods,YES

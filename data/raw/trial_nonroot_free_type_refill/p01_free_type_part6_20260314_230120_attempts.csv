@@ -1,0 +1,17 @@
+prompt_index,attempt_index,attempt_start_ns,submit_ns,elapsed_ms,prompt_text,typed_text,match,backspace_count,typed_char_count,keypress_count,rate_now_hz,rate_median_hz_recent,rate_min_hz_recent,rate_max_hz_recent
+0,1,15689928000,43984426916,28294.50,open ticket 3201 and assign it to user 18,open ticket 3201 and assign it to user 18,YES,0,41,42,190.04,206.26,190.04,206.99
+1,1,43984944750,75810960708,31826.02,api server 4 handled 920 requests in 5 minutes,api server 4 handled 920 requested in 5 minutes,NO,0,47,48,206.95,204.97,187.06,206.95
+1,2,75811403000,112159545666,36348.14,api server 4 handled 920 requests in 5 minutes,api server 4 handled 920 requests in 5 minutes,YES,0,46,47,207.72,205.96,185.21,207.72
+2,1,112160978041,123250848958,11089.87,node 7 used 63 percent memory at 11 05,node 7 used 63,NO,0,14,15,187.56,205.96,187.56,206.99
+2,2,123251237041,146929819000,23678.58,node 7 used 63 percent memory at 11 05,node 7 used 63 percent memory at 11 05,YES,0,38,39,187.45,205.96,187.45,207.57
+3,1,146930194750,171240520125,24310.33,cache hit rate reached 97 on run 2,cache hit rate reached 97 on run 2,YES,0,34,35,186.70,207.67,186.70,207.95
+4,1,171242099166,197480137208,26238.04,deploy build 41 to stage at 6 45 pm,deploy build 41 to stage at 6 45 pm,YES,0,35,36,206.96,206.96,185.51,206.96
+5,1,197480529541,227435372041,29954.84,database shard 3 stored 240000 rows today,database shard 3 stored 240000 rows today,YES,0,41,42,208.95,206.69,186.92,208.95
+6,1,227437217000,250129282166,22692.07,rotate logs every 12 hours on host 9,rotate logs every 12 hours on host 9,YES,0,36,37,207.91,206.69,185.07,207.91
+7,1,250130045125,284541812083,34411.77,alert rule 15 triggers when cpu stays above 90,alert rule 15 triggers when cpu stays above 90,YES,0,46,47,185.95,205.96,185.95,207.02
+8,1,284542242500,290470310166,5928.07,session 88 expired after 30 idle minutes,session,NO,0,7,8,185.93,206.96,185.93,207.57
+8,2,290470746333,318525760083,28055.01,session 88 expired after 30 idle minutes,session 88 expired after 30 idle minutes,YES,1,40,43,205.12,205.12,187.77,207.04
+9,1,318527579416,356794626125,38267.05,queue depth dropped from 44 to 6 overnight,queue depth dropped from 44 to 6 overnight,YES,0,42,43,205.25,205.25,205.00,207.66
+10,1,356795011833,383495272666,26700.26,latency stayed near 23 ms during test 4,latency stayed near 23 ms during test 4,YES,0,39,40,206.61,206.61,185.71,208.00
+11,1,383495675000,413637450416,30141.78,service 10 restarted 2 times after patch 1,service 10 restarted 2 times after patch 1,YES,0,42,43,184.11,205.96,184.11,205.96
+12,1,413639223833,442721758875,29082.54,monitor panel 5 shows green status for all pods,monitor panel 5 shows green status for all pods,YES,0,47,48,205.96,206.46,205.96,206.96

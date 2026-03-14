@@ -1,0 +1,15 @@
+prompt_index,timestamp_ns,prompt_text,typed_text,match
+0,14421854375,version 2 point 0 was released on october 15,version 2 point 0 was released on october 15,YES
+1,45479357625,there are exactly 365 days in a regular year,there are exactly 365 days in a regular year,YES
+2,76904690291,the library opens at 9 am and closes at 8 pm,the library opens at 9 am and closes at 8 pm,YES
+3,119289349791,she scored 97 out of 100 on the final exam,she scored 97 out of 100 on the final exam,YES
+4,155768639916,working from home has become much more common since 2020 and many people prefer it,working from home has become much more common since 2020 and many people prefer it,YES
+5,215580078833,the restaurant on 5th avenue serves excellent pasta and their prices are very reasonable,the restaurant on 5th avenue ser,NO
+5,253087007708,the restaurant on 5th avenue serves excellent pasta and their prices are very reasonable,the restaurant on 5th avenue serves excellent pasta and their prices are very reasonable,YES
+6,329333574416,i just finished watching a 3 hour documentary about deep ocean exploration,i just finished watching a 3 hour documentary about deep ocean exploration,YES
+7,376283061375,please update your profile with your new address before december 31,please update your profile with your new address before december 31,YES
+8,423995034083,the concert tickets cost 75 dollars each and we need 4 of them,the concert tickets cost 75 dollars each and we need 4 of them,YES
+9,462878435750,the quiz was extremely difficult but quite fair overall,the quiz was extremely difficult but quite fair overall,YES
+10,501646523791,jazz musicians often explore complex rhythms and exotic scales,jazz musicians often explore complex rhythms and exotic scales,YES
+11,544539409541,the zookeeper examined the injured fox very carefully,the zookeeper examined the injured fox very carefully,YES
+12,580314092916,six juicy steaks sizzled in a pan while the chef relaxed,six juicy steaks sizzled in a pan while the chef relaxed,YES

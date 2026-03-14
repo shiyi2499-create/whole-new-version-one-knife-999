@@ -1,0 +1,15 @@
+prompt_index,attempt_index,attempt_start_ns,submit_ns,elapsed_ms,prompt_text,typed_text,match,backspace_count,typed_char_count,keypress_count,rate_now_hz,rate_median_hz_recent,rate_min_hz_recent,rate_max_hz_recent
+0,1,13271244375,45549594791,32278.35,student 12 solved 8 math problems before dinner,student 12 solved 8 math problems before dinner,YES,0,47,48,203.97,204.97,203.97,206.96
+1,1,45550082916,82575532250,37025.45,chapter 15 includes 4 examples on linear models,chapter 15 includes 4 examples on linear models,YES,1,47,50,186.29,205.89,186.29,206.22
+2,1,82575900500,108825395291,26249.49,exam room 6 opens at 8 30 for section 2,exam room 6 opens at 8 30 for section 2,YES,0,39,40,206.53,205.96,186.13,206.53
+3,1,108825765166,132686385833,23860.62,the class average was 84 on quiz 9,the class average was 84 on quiz 9,YES,0,34,35,206.96,206.96,187.58,207.43
+4,1,132686747750,158072063083,25385.32,read pages 50 to 63 and write summary 1,read pages 50 to 63 and write summary 1,YES,0,39,40,207.47,205.31,186.79,207.47
+5,1,158072424166,185742028666,27669.60,team 3 built 2 prototypes in week 7,team 3 built 2 prototypes in week 7,YES,0,35,36,207.61,207.61,186.06,208.38
+6,1,185742470166,212903208291,27160.74,lab group 5 measured 0 25 volts at node b,lab group 5 measured 0 25 volts at node b,YES,0,41,42,208.95,205.96,185.07,208.95
+7,1,212904684791,240425825791,27521.14,history unit 4 covers years 1914 to 1918,history unit 4 covers years 1914 to 1918,YES,0,40,41,188.06,188.06,188.05,209.87
+8,1,240426199958,262129183291,21702.98,practice set 11 has 30 short questions,practice set 11 has 30 short questions,YES,0,38,39,208.52,205.87,187.58,208.52
+9,1,262129618500,295818459416,33688.84,submit homework 10 before 23 59 tonight,submit homework 10 before 23 59 tonight,YES,1,39,42,206.96,206.96,187.55,206.96
+10,1,295819206125,321375996833,25556.79,score target is 95 after 14 study days,score target is 95 after 14 study days,YES,0,38,39,207.17,207.17,184.70,207.95
+11,1,321376805458,340276964750,18900.16,library desk 2 issued book 34017,library desk 2 issued book 34017,YES,0,32,33,209.56,206.08,185.33,209.56
+12,1,340278426291,353389788333,13111.36,course code cs101 meets on monday at 9,course code cs101,NO,1,17,21,186.95,205.87,186.95,207.94
+12,2,353390290333,374812173125,21421.88,course code cs101 meets on monday at 9,course code cs101 meets on monday at 9,YES,0,38,39,205.96,204.97,188.29,205.96

@@ -25,17 +25,21 @@
 - 频率仅作为**采集质控门控**使用，不作为模型输入特征。
 - 统一预处理到 `target_rate_hz=190`（固定窗口长度 57）。
 
-### 数据状态共识（2026-03-12）
+### 数据状态共识（2026-03-15）
 - `single_key` 主数据已完成当前轮重采与清洗。
 - `boost`（g8 补强）已完成并并入训练可用集。
 - 目前 `single_key + boost` 频率扫描为目标域内（无 non-target 会话，按当前容差）。
-- 下一步重点是 `free_type` 受控慢速闭环与深度模型评估。
+- `sentence` 型 free_type 数据保留，但暂时不作为当前主攻路线。
+- 当前 Phase 3 主线改为：`single_key + boost` baseline -> `password-like no-space strings` 测试。
+- `continuous` profile 保留为可选桥接层，但不是当前必做项。
 
 ## 3. 代码入口与职责
 
 - `collector.py`
   - 数据采集入口（single_key / free_type）
   - 频率实时监控 + 采集前频率门控 + 失败自动丢弃
+  - `free_type` 现支持 `sentence / continuous / password` 三种 prompt profile
+  - 当前主攻 profile 是 `password`
 - `preprocessor.py`
   - 按键事件对齐切窗 + 统一重采样（默认 190Hz）
 - `train_baseline.py`
@@ -56,6 +60,9 @@
   - 补强数据（hard keys）
 - `data/raw/free_type/`
   - free_type 数据
+- `data/raw/free_type_sentence_* / free_type_continuous_* / free_type_password_*`
+  - 可按 prompt profile 分开存放，避免后处理混淆
+  - 当前主线优先使用 `free_type_password_*`
 - `data/raw/legacy_round4_ro/`
   - 历史只读备份目录（默认不作为主扫描源）
 
@@ -77,17 +84,29 @@
 
 ```bash
 # 单键（写入 data/raw/single_key）
-sudo .venv/bin/python3 collector.py \
+.venv/bin/python3 collector.py \
   --mode single_key --raw-subdir single_key --group 2 --repeats 100 \
   --single-gate-rate 190 --precheck-sec 5
 
-# free_type（慢速闭环，写入 data/raw/free_type）
-sudo .venv/bin/python3 collector.py \
+# free_type（句子型，保留但非当前主攻）
+.venv/bin/python3 collector.py \
   --mode free_type --raw-subdir free_type --part 1 --free-groups 16 \
   --free-gate-rate 150 --precheck-sec 5
 
+# password-like strings
+.venv/bin/python3 collector.py \
+  --mode free_type --prompt-profile password \
+  --raw-subdir free_type_password_v1 --part 1 --free-groups 16 \
+  --free-gate-rate 150 --precheck-sec 5
+
+# no-space bridge strings (optional, not current priority)
+.venv/bin/python3 collector.py \
+  --mode free_type --prompt-profile continuous \
+  --raw-subdir free_type_continuous_v1 --part 1 --free-groups 16 \
+  --free-gate-rate 150 --precheck-sec 5
+
 # hard-key 补强（写入 data/raw/boost）
-sudo .venv/bin/python3 collector.py \
+.venv/bin/python3 collector.py \
   --mode single_key --raw-subdir boost --group 8 --repeats 100 \
   --single-gate-rate 190 --precheck-sec 5
 ```
@@ -170,18 +189,20 @@ python3 preprocessor.py --rounds free_type --session-type free_type --target-rat
   - 已完成 `single_key + boost` 扫描与非目标会话清理
 - 🟩【已完成】Step 2: single_key 补采
   - g1-g6 高质量数据已补齐，g8 补强已完成
-- 🟨【进行中】Step 3: free_type 重采（慢速闭环优先）
-  - 目标：先在低重叠输入条件下跑通稳定闭环
-  - 说明：采集/评估/微调代码已就绪，当前等待明天正式采集新 free_type
-- 🟨【进行中】Step 4: free_type 闭环评估（新数据）
-  - `run_freetype_closure_eval.py`（zero-shot）
-  - `run_freetype_finetune_beam.py`（微调前后对比）
-- 🟥【未开始】Step 5: 论文级整理
+- 🟨【进行中】Step 3: password-like strings 重采（慢速、固定手指、no-space）
+  - 目标：先在低重叠输入条件下跑通 password-style 攻击闭环
+  - 说明：句子型 free_type 暂不作为主 headline；`password` profile 为当前主路线
+- 🟨【进行中】Step 4: password-route 闭环评估（新数据）
+  - `phase3_password_inception/run_password_closure_inception.py`
+  - 指标：`char top-1/top-3/top-5`、`sequence top-10/top-50/top-100`、`CER`
+- 🟥【待办】Step 5: continuous stream 中的 keystroke onset detection
+  - 目标：在连续 IMU 流中自动判断“何时发生按键”
+  - 作用：补齐从“持续监听传感器”到“自动切窗”的攻击链关键一环
+- 🟥【未开始】Step 6: 论文级整理
   - 指标表、消融、威胁模型边界、可复现实验脚本
 
-> 注：`phase3_decoder.py` 当前是“isolated keystroke → synthetic word simulation”评估，
-> 不能当作真实 free_type 端到端准确率 headline。
-> `results_phase3.json` 已新增 `evaluation_mode` 字段，防止口径误读。
+> 注：`phase3_decoder.py` 当前仍偏向旧的 sentence/word 解码口径，
+> 不能直接当作当前 password 主线的 headline。
 
 ## 7. 开放技术问题：能否强制跑到最高频档？
 
@@ -201,7 +222,8 @@ python3 preprocessor.py --rounds free_type --session-type free_type --target-rat
 
 - 预检失败会自动删除该次会话文件，这是预期行为
 - 当前主线按“单一高频域”训练，不引入频率档特征
-- free_type “慢速输入”属于明确受控条件，后续论文中需显式声明实验边界
+- password-like 慢速输入属于明确受控条件，后续论文中需显式声明实验边界
+- 自动 onset detection 仍是当前主线中的待补环节
 
 ## 9. 明天 free_type 采集与训练执行清单
 

@@ -1,0 +1,14 @@
+prompt_index,timestamp_ns,prompt_text,typed_text,match
+0,26703741750,they decided to travel across europe during the summer,they decided to travel across europe during the summer,YES
+1,58841452541,the project deadline has been extended until next week,the project deadline has been extended until next week,YES
+2,92107793333,my phone number is 8675309 please call me back,my phone number is 8675309 please call me back,YES
+3,123639430375,the meeting is scheduled for 3 pm on march 14 2026,the meeting is scheduled for 3 pm on march 14 2026,YES
+4,156118665041,room 207 is on the 2nd floor of building 5,room 207 is on the 2nd floor of building 5,YES
+5,178207389958,the password requires at least 8 characters and 2 digits,the password requires at least 8 characters and 2 digits,YES
+6,210985031791,flight 492 departs at 6 am from gate 17,flight 492 departs at 6 am from gate 17,YES
+7,237488862458,order number 30518 was shipped on january 9 2026,order number 30518 was shipped on january 9 2026,YES
+8,267790282791,the zip code for downtown is 10001,the zip code for downtown is 10001,YES
+9,287725726166,add 250 grams of flour and 3 eggs to the mixture,add 250 grams of flour and 3 eggs to the mixture,YES
+10,314330786916,chapter 7 starts on page 143 of the textbook,chapter 7 starts on page 143 of the textbook,YES
+11,341320030416,the final score was 96 to 84 in overtime,the final score was 96 to 84 in overtime,YES
+12,367331657125,apartment 4b is located at 123 elm street,apartment 4b is located at 123 elm street,YES

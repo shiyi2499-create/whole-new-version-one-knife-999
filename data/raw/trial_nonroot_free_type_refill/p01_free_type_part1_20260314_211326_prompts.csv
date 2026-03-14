@@ -1,0 +1,14 @@
+prompt_index,timestamp_ns,prompt_text,typed_text,match
+0,61887276416,the quick brown fox jumps over the lazy dog,the quick brown fox jumps over the lazy dog,YES
+1,115416777291,pack my box with five dozen liquor jugs,pack my box with five dozen liquor jugs,YES
+2,143791838916,how vexingly quick daft zebras jump,how vexingly quick daft zebras jump,YES
+3,170610092166,the five boxing wizards jump quickly,the five boxing wizards jump quickly,YES
+4,192348704125,sphinx of black quartz judge my vow,sphinx of black quartz judge my vow,YES
+5,215927215958,i need to buy some groceries from the store today,i need to buy some groceries from the store today,YES
+6,246872244666,please send me the report before friday afternoon,please send me the report before friday afternoon,YES
+7,277558287750,she walked quickly through the park and sat on a bench,she walked quickly through the park and sat on a bench,YES
+8,306611499791,we should meet at the coffee shop around noon,we should meet at the coffee shop around noon,YES
+9,331282564583,the weather forecast says it will rain tomorrow morning,the weather forecast says it will rain tomorrow morning,YES
+10,365430841541,can you help me fix this problem with my computer,can you help me fix this problem with my computer,YES
+11,394670071375,he finished reading the entire book in just two days,he finished reading the entire book in just two days,YES
+12,426158413791,my favorite subject in school was always mathematics,my favorite subject in school was always mathematics,YES

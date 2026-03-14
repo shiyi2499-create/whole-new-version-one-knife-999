@@ -1,0 +1,15 @@
+prompt_index,attempt_index,attempt_start_ns,submit_ns,elapsed_ms,prompt_text,typed_text,match,backspace_count,typed_char_count,keypress_count,rate_now_hz,rate_median_hz_recent,rate_min_hz_recent,rate_max_hz_recent
+0,1,13753048250,45625823708,31872.78,please confirm task 101 before 9 am meeting,please confirm task 101 before 9 am meeting,YES,0,43,44,205.61,205.61,187.06,206.72
+1,1,45626289375,74971041541,29344.75,team alpha will review sprint 5 at 2 pm,team alpha will review sprint 5 at 2 pm,YES,0,39,40,209.01,206.96,186.51,209.01
+2,1,74971402458,98629862958,23658.46,send draft 3 to manager 7 by noon,send draft 3 to manager 7 by noon,YES,0,33,34,205.96,205.96,186.19,208.33
+3,1,98630270333,127742956208,29112.69,project room 12 has 4 open seats today,project room 12 has 4 open seats today,YES,0,38,39,205.55,205.55,187.66,207.76
+4,1,127743863416,157652232333,29908.37,daily standup starts at 10 and ends at 10 15,daily standup starts at 10 and ends at 10 15,YES,0,44,45,185.07,204.96,185.07,206.96
+5,1,157653950583,173083379625,15429.43,we logged 28 bugs and closed 19 this week,we logged 28 bugs,NO,0,17,18,206.34,206.34,187.66,206.96
+5,2,173083812916,202290338125,29206.53,we logged 28 bugs and closed 19 this week,we logged 28 bugs and closed 19 this week,YES,0,41,42,206.96,206.18,186.37,206.96
+6,1,202290702208,234387063583,32096.36,client 24 requested invoice 8801 on monday,client 24 requested invoice 8801 on monday,YES,0,42,43,206.96,206.78,186.06,206.96
+7,1,234387472000,266635719958,32248.25,backup job 6 failed at 1 30 and retried,backup job 6 failed at 1 30 and retried,YES,0,39,40,205.75,205.75,186.06,208.09
+8,1,266637151583,293337861583,26700.71,printer 2 needs toner after 640 pages,printer 2 needs toner after 640 pages,YES,0,37,38,185.49,206.84,185.49,207.95
+9,1,293339633625,318069141833,24729.51,office wifi 5g was stable for 8 hours,office wifi 5g was stable for 8 hours,YES,0,37,38,186.20,206.96,186.20,207.65
+10,1,318070897291,346087839541,28016.94,the planner shows 11 tasks for day 3,the planner shows 11 tasks for day 3,YES,0,36,37,207.42,207.36,185.53,207.42
+11,1,346088297750,378855251708,32766.95,mark checkpoint 2 after reading chapter 14,mark checkpoint 2 after reading chapter 14,YES,0,42,43,206.53,206.53,187.11,207.05
+12,1,378856679416,408610689916,29754.01,return keycard 9 to desk 4 after lunch,return keycard 9 to desk 4 after lunch,YES,0,38,39,207.40,205.96,184.16,207.40

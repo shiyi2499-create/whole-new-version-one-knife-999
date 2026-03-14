@@ -4,7 +4,7 @@ Keystroke Vibration Data Collector - Main Orchestrator
 Coordinates sensor reading, keyboard listening, and rate monitoring.
 Supports two modes:
   1. single_key  - guided per-key repeated pressing
-  2. free_type   - natural typing with auto key logging
+  2. free_type   - guided text typing with selectable prompt profiles
 
 FIXED v2:
   - Background drain thread runs continuously in ALL modes
@@ -17,8 +17,11 @@ FIXED v3:
     Background thread drains sensor only; prompt loop exclusively drains keyboard.
   - Added a short free_type keyboard self-check ("abc 123") before prompts.
 
-Run with:  sudo python3 collector.py --mode single_key
-           sudo python3 collector.py --mode free_type
+Run with:  python3 collector.py --mode single_key
+           python3 collector.py --mode free_type --prompt-profile sentence
+           python3 collector.py --mode free_type --prompt-profile continuous
+           python3 collector.py --mode free_type --prompt-profile password
+           (direct SPU non-root path is preferred; macimu remains optional)
 """
 
 import os
@@ -44,6 +47,7 @@ class DataCollector:
 
     def __init__(self, config: CollectorConfig, mode: str, group: int = 0,
                  free_type_part: int = 0, free_type_parts_total: int = 16,
+                 prompt_profile: str = "sentence",
                  single_rate_gate_hz: float = 190.0,
                  free_rate_gate_hz: float = 150.0,
                  precheck_sec: float = 5.0):
@@ -52,6 +56,7 @@ class DataCollector:
         self.group = group
         self._free_type_part = free_type_part
         self._free_type_parts_total = max(1, int(free_type_parts_total))
+        self._prompt_profile = (prompt_profile or "sentence").strip().lower()
         self._single_rate_gate_hz = float(single_rate_gate_hz)
         self._free_rate_gate_hz = float(free_rate_gate_hz)
         self._precheck_sec = float(precheck_sec)
@@ -70,7 +75,8 @@ class DataCollector:
         )
 
         # Session info
-        self.session_prefix = config.session_prefix(mode, group, free_type_part)
+        free_variant = self._prompt_profile if (mode == "free_type" and self._prompt_profile != "sentence") else ""
+        self.session_prefix = config.session_prefix(mode, group, free_type_part, variant=free_variant)
         self.sensor_csv_path = os.path.join(
             config.RAW_DIR, f"{self.session_prefix}_sensor.csv"
         )
@@ -220,6 +226,21 @@ class DataCollector:
             ])
         self._event_count += len(events)
 
+    def _filter_single_key_events(self, events: list[KeyEvent]) -> list[KeyEvent]:
+        """
+        Keep single_key event logs clean by recording only the current target key.
+
+        This avoids contaminating a single-key session with accidental presses
+        such as backspace/capslock or unrelated terminal noise.
+        """
+        if not events:
+            return []
+        with self._target_press_lock:
+            target_key = self._current_target_key
+        if target_key is None:
+            return []
+        return [e for e in events if e.key == target_key]
+
     # ── Background drain thread (runs in ALL modes) ──────────
 
     def _drain_thread_fn(self):
@@ -241,6 +262,8 @@ class DataCollector:
             # Drain keyboard events (single_key only; free_type owns keyboard drain)
             if self._drain_keyboard_in_background:
                 events = self.keyboard.drain()
+                if events:
+                    events = self._filter_single_key_events(events)
                 if events:
                     with self._csv_lock:
                         self._write_key_events(events)
@@ -272,6 +295,8 @@ class DataCollector:
                 self._write_sensor_samples(samples)
         if self._drain_keyboard_in_background:
             events = self.keyboard.drain()
+            if events:
+                events = self._filter_single_key_events(events)
             if events:
                 with self._csv_lock:
                     self._write_key_events(events)
@@ -439,7 +464,12 @@ class DataCollector:
     # ── Free Type Mode (Guided with validation) ────────────────
 
     def _run_free_type_mode(self):
-        from typing_prompts import PROMPTS
+        from typing_prompt_profiles import get_prompt_profile
+
+        profile = get_prompt_profile(self._prompt_profile)
+        PROMPTS = profile["prompts"]
+        profile_name = profile["name"]
+        profile_desc = profile["description"]
 
         # Split into configurable parts (default: 16 groups for 208 prompts)
         n_parts = self._free_type_parts_total
@@ -463,6 +493,8 @@ class DataCollector:
             f"\n{'='*60}\n"
             f"  FREE TYPE MODE (Guided)\n"
             f"{'='*60}\n"
+            f"  Prompt profile: {profile_name}\n"
+            f"  Description:    {profile_desc}\n"
             f"  {part_label}: {len(prompts)} sentences\n"
             f"\n"
             f"  How it works:\n"
@@ -640,6 +672,8 @@ class DataCollector:
                 f.write(f"Keys in group: {' '.join(g['keys'])}\n")
             if self._free_type_part > 0:
                 f.write(f"Free type part: {self._free_type_part}/{self._free_type_parts_total}\n")
+            if self.mode == "free_type":
+                f.write(f"Prompt profile: {self._prompt_profile}\n")
             f.write(f"Participant: {self.cfg.PARTICIPANT_ID}\n")
             f.write(f"Start: {datetime.fromtimestamp(start_time).isoformat()}\n")
             f.write(f"End: {datetime.fromtimestamp(end_time).isoformat()}\n")
@@ -673,7 +707,9 @@ class DataCollector:
             self.sensor.start()
         except Exception as e:
             print(f"\n  ❌ Failed to start sensor: {e}")
-            print("  Make sure you're running with sudo on Apple Silicon Mac.")
+            print("  Ensure this is an Apple Silicon Mac with the SPU IMU visible.")
+            print("  The direct SPU path should work without root on the validated setup.")
+            print("  If direct SPU fails and macimu is installed, root fallback is still available.")
             self._close_csv_files()
             return
 
@@ -826,6 +862,11 @@ def main():
         help="Key group 1-8, or 0 for all (default: interactive menu)"
     )
     parser.add_argument(
+        "--keys", default="",
+        help="Comma-separated explicit key list for single_key mode, e.g. 'a' or 'a,b,c'. "
+             "If set, overrides --group."
+    )
+    parser.add_argument(
         "--round", type=int, default=1,
         help="Data collection round number (default: 1). "
              "Data saves to data/raw/round{N}/ unless --raw-subdir is set."
@@ -843,6 +884,11 @@ def main():
     parser.add_argument(
         "--free-groups", type=int, default=16,
         help="Number of groups to split free_type prompts into (default: 16, min: 1)"
+    )
+    parser.add_argument(
+        "--prompt-profile", choices=["sentence", "continuous", "password"],
+        default="sentence",
+        help="Prompt profile for free_type mode: sentence | continuous | password"
     )
     args = parser.parse_args()
 
@@ -870,23 +916,31 @@ def main():
     # Group selection (only for single_key mode)
     group = 0
     if args.mode == "single_key":
-        if args.group == -1:
-            # Interactive menu
-            group = show_group_menu(cfg)
+        if args.keys.strip():
+            cfg.KEY_LIST = [k.strip().lower() for k in args.keys.split(",") if k.strip()]
+            if not cfg.KEY_LIST:
+                print("  ❌ --keys was provided but no valid keys were parsed.")
+                sys.exit(1)
+            print("  Selected:    explicit key list")
+            print(f"  Keys:        {' '.join(cfg.KEY_LIST)}")
         else:
-            group = args.group
+            if args.group == -1:
+                # Interactive menu
+                group = show_group_menu(cfg)
+            else:
+                group = args.group
 
-        if group == 0:
-            # All keys
-            cfg.KEY_LIST = []
-            for g in cfg.KEY_GROUPS.values():
-                cfg.KEY_LIST.extend(g["keys"])
-            print(f"  Selected:    ALL keys ({len(cfg.KEY_LIST)} keys)")
-        else:
-            g = cfg.KEY_GROUPS[group]
-            cfg.KEY_LIST = g["keys"]
-            print(f"  Selected:    {g['name']}")
-            print(f"  Keys:        {' '.join(g['keys'])}")
+            if group == 0:
+                # All keys
+                cfg.KEY_LIST = []
+                for g in cfg.KEY_GROUPS.values():
+                    cfg.KEY_LIST.extend(g["keys"])
+                print(f"  Selected:    ALL keys ({len(cfg.KEY_LIST)} keys)")
+            else:
+                g = cfg.KEY_GROUPS[group]
+                cfg.KEY_LIST = g["keys"]
+                print(f"  Selected:    {g['name']}")
+                print(f"  Keys:        {' '.join(g['keys'])}")
 
         print(f"  Repeats/key: {args.repeats}")
         total = len(cfg.KEY_LIST) * args.repeats
@@ -894,11 +948,10 @@ def main():
 
     if args.mode == "free_type" and args.part > 0:
         print(f"  Part:        {args.part}/{max(1, args.free_groups)}\n")
-
-    if os.geteuid() != 0:
-        print("  ⚠️  Not running as root! SPU sensor requires sudo.")
-        print("  Run:  sudo .venv/bin/python3 collector.py --mode single_key\n")
-        sys.exit(1)
+    if args.mode == "free_type":
+        print(f"  Prompt set:  {args.prompt_profile}")
+    print(f"  euid:        {os.geteuid() if hasattr(os, 'geteuid') else 'N/A'}")
+    print("  Sensor path: direct SPU (preferred), macimu fallback if needed\n")
 
     collector = DataCollector(
         cfg,
@@ -906,6 +959,7 @@ def main():
         group,
         free_type_part=args.part,
         free_type_parts_total=args.free_groups,
+        prompt_profile=args.prompt_profile,
         single_rate_gate_hz=args.single_gate_rate,
         free_rate_gate_hz=args.free_gate_rate,
         precheck_sec=args.precheck_sec,

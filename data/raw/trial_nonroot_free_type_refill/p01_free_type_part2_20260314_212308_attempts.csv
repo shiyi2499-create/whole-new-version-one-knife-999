@@ -1,0 +1,14 @@
+prompt_index,attempt_index,attempt_start_ns,submit_ns,elapsed_ms,prompt_text,typed_text,match,backspace_count,typed_char_count,keypress_count,rate_now_hz,rate_median_hz_recent,rate_min_hz_recent,rate_max_hz_recent
+0,1,26703741750,58840926500,32137.18,they decided to travel across europe during the summer,they decided to travel across europe during the summer,YES,0,54,55,186.36,206.22,186.36,206.95
+1,1,58841452541,92107418541,33265.97,the project deadline has been extended until next week,the project deadline has been extended until next week,YES,0,54,55,206.74,206.74,186.06,207.95
+2,1,92107793333,123639086166,31531.29,my phone number is 8675309 please call me back,my phone number is 8675309 please call me back,YES,0,46,47,206.00,205.33,186.06,206.00
+3,1,123639430375,156118289541,32478.86,the meeting is scheduled for 3 pm on march 14 2026,the meeting is scheduled for 3 pm on march 14 2026,YES,0,50,51,186.67,205.13,186.67,205.96
+4,1,156118665041,178206977416,22088.31,room 207 is on the 2nd floor of building 5,room 207 is on the 2nd floor of building 5,YES,0,42,43,208.65,206.35,186.06,208.65
+5,1,178207389958,210984622833,32777.23,the password requires at least 8 characters and 2 digits,the password requires at least 8 characters and 2 digits,YES,0,56,57,204.97,204.97,185.59,208.06
+6,1,210985031791,237488485916,26503.45,flight 492 departs at 6 am from gate 17,flight 492 departs at 6 am from gate 17,YES,0,39,40,187.06,207.00,187.06,207.20
+7,1,237488862458,267789841666,30300.98,order number 30518 was shipped on january 9 2026,order number 30518 was shipped on january 9 2026,YES,0,48,49,207.95,207.95,186.06,207.95
+8,1,267790282791,287725403458,19935.12,the zip code for downtown is 10001,the zip code for downtown is 10001,YES,0,34,35,185.21,206.04,185.21,208.95
+9,1,287725726166,314330332625,26604.61,add 250 grams of flour and 3 eggs to the mixture,add 250 grams of flour and 3 eggs to the mixture,YES,0,48,49,207.95,206.53,187.75,207.95
+10,1,314330786916,341319623125,26988.84,chapter 7 starts on page 143 of the textbook,chapter 7 starts on page 143 of the textbook,YES,0,44,45,186.47,205.60,186.47,205.96
+11,1,341320030416,367331241958,26011.21,the final score was 96 to 84 in overtime,the final score was 96 to 84 in overtime,YES,0,40,41,209.22,208.52,186.07,209.22
+12,1,367331657125,392838415458,25506.76,apartment 4b is located at 123 elm street,apartment 4b is located at 123 elm street,YES,0,41,42,206.91,206.91,186.97,209.94

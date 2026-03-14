@@ -1,0 +1,15 @@
+prompt_index,attempt_index,attempt_start_ns,submit_ns,elapsed_ms,prompt_text,typed_text,match,backspace_count,typed_char_count,keypress_count,rate_now_hz,rate_median_hz_recent,rate_min_hz_recent,rate_max_hz_recent
+0,1,22978288958,56177583916,33199.29,our backup window starts at 2 am and ends at 4 am,our backup window starts at 2 am and ends at 4 am,YES,0,49,50,186.63,205.96,186.63,207.16
+1,1,56178153000,93761430125,37583.28,ticket 7812 was reopened after the nightly test failed,ticket 7812 was reopened after the nightly test failed,YES,0,54,55,186.83,205.33,186.83,205.96
+2,1,93761820416,126624992083,32863.17,please verify that user 42 can access report 9,please verify that user 42 can access report 9,YES,0,46,47,206.96,205.77,205.17,206.96
+3,1,126625379000,156248887250,29623.51,server 3 reached 92 percent cpu for 15 minutes,server 3 reached 92 percent cpu for 15 minutes,YES,0,46,47,207.21,206.92,184.55,207.21
+4,1,156249211875,188412259583,32163.05,we booked table 12 for 5 people at 7 pm,we booked table 12 for 5 people at 7 pm,YES,0,39,40,206.52,206.52,187.06,207.02
+5,1,188412635041,216080226333,27667.59,batch 608 processed 144 files in 27 seconds,batch 608 processed 144 files in 27,NO,0,35,36,207.95,204.97,186.06,207.95
+5,2,216080673750,251243493958,35162.82,batch 608 processed 144 files in 27 seconds,batch 608 processed 144 files in 27 seconds,YES,0,43,44,204.97,204.96,186.06,204.97
+6,1,251243905875,281187006916,29943.10,meeting room 11 is reserved from 10 to 11,meeting room 11 is reserved from 10 to 11,YES,0,41,42,205.90,205.90,187.38,206.84
+7,1,281187233916,314083186375,32895.95,the train leaves platform 6 at 8 35 tomorrow,the train leaves platform 6 at 8 35 tomorrow,YES,0,44,45,187.34,204.13,187.34,207.57
+8,1,314083694375,343342051750,29258.36,device 19 reported error code 503 twice today,device 19 reported error code 503 twice today,YES,0,45,46,206.67,206.59,186.58,206.67
+9,1,343342483375,373073480666,29731.00,set reminder 30 minutes before the 6 pm call,set reminder 30 minutes before the 6 pm call,YES,0,44,45,206.24,206.24,185.16,206.95
+10,1,373073946000,403868617666,30794.67,order 4409 includes 2 cables and 1 adapter,order 4409 includes 2 cables and 1 adapter,YES,0,42,43,206.95,205.96,204.97,206.95
+11,1,403869053666,430910146916,27041.09,my package arrived on april 3 at 9 20 am,my package arrived on april 3 at 9 20 am,YES,0,40,41,187.14,205.96,187.14,207.84
+12,1,430910578708,463683967500,32773.39,please archive log folder 7 before june 1,please archive log folder 7 before june 1,YES,0,41,42,205.96,205.96,185.07,206.93

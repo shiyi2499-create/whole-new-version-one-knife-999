@@ -1,0 +1,14 @@
+prompt_index,attempt_index,attempt_start_ns,submit_ns,elapsed_ms,prompt_text,typed_text,match,backspace_count,typed_char_count,keypress_count,rate_now_hz,rate_median_hz_recent,rate_min_hz_recent,rate_max_hz_recent
+0,1,21746480500,49567099166,27820.62,train line 2 reaches station 16 at 7 20,train line 2 reaches station 16 at 7 20,YES,0,39,40,206.93,204.97,186.06,206.93
+1,1,49567768541,81830309291,32262.54,bus route 45 departs stop 9 every 30 minutes,bus route 45 departs stop 9 every 30 minutes,YES,0,44,45,208.24,207.63,187.52,208.24
+2,1,81830681791,114929108541,33098.43,hotel room 308 includes 2 beds and desk 1,hotel room 308 includes 2 beds and desk 1,YES,0,41,42,206.96,204.97,188.05,206.96
+3,1,114929508750,148727472208,33797.96,gate 22 changed to gate 18 before boarding,gate 22 changed to gate 18 before boarding,YES,0,42,43,184.61,205.58,184.61,207.80
+4,1,148727865083,174836914208,26109.05,seat 14a was moved to row 17 seat 14,seat 14a was moved to row 17 seat 14,YES,0,36,37,206.98,206.96,205.84,206.98
+5,1,174837345916,198871366208,24034.02,taxi fare was 26 for a 12 km ride,taxi fare was 26 for a 12 km ride,YES,0,33,34,206.95,206.95,186.34,207.10
+6,1,198873169125,236190115875,37316.95,flight 730 arrived at 5 55 in terminal 3,flight 730 arrived at 5 55 in terminal 3,YES,0,40,41,185.22,205.10,185.22,206.11
+7,1,236190552791,262292756958,26102.20,car rental desk closes at 11 on sunday,car rental desk closes at 11 on sunday,YES,0,38,39,186.63,205.99,186.63,207.95
+8,1,262293195208,286276720666,23983.53,map version 6 lists 9 nearby cafes,map version 6 lists 9 nearby cafes,YES,0,34,35,186.11,206.96,186.11,208.19
+9,1,286277164041,314388025666,28110.86,platform 4 announcement repeated 3 times,platform 4 announcement repeated 3 times,YES,0,40,41,206.95,206.95,186.06,207.95
+10,1,314388500250,346840020333,32451.52,train ticket 5520 covers zones 1 2 and 3,train ticket 5520 covers zones 1 2 and 3,YES,0,40,41,207.67,205.96,186.25,207.67
+11,1,346840468750,384464334958,37623.87,luggage tag 77 matched claim number 77,luggage tag 77 matched claim number 77,YES,0,38,39,186.16,205.96,186.16,207.95
+12,1,384465778750,417566608125,33100.83,shuttle 8 runs from lot 5 every 20 minutes,shuttle 8 runs from lot 5 every 20 minutes,YES,0,42,43,187.55,205.54,187.55,207.60

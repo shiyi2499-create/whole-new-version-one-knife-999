@@ -41,9 +41,45 @@ class KeyboardListener:
         self._listener = None
         self._total_events = 0
 
+    @staticmethod
+    def _is_accessibility_trusted() -> Optional[bool]:
+        """
+        Best-effort macOS Accessibility trust probe.
+
+        Important caveat:
+        pynput's Darwin backend uses a Quartz event tap (CGEventTapCreate), so
+        this check alone is not sufficient to guarantee key capture. On recent
+        macOS versions, Input Monitoring may still be required even when this
+        returns True.
+        """
+        try:
+            import ctypes
+            import ctypes.util
+
+            lib_path = ctypes.util.find_library("ApplicationServices")
+            if not lib_path:
+                return None
+            lib = ctypes.cdll.LoadLibrary(lib_path)
+            lib.AXIsProcessTrusted.restype = ctypes.c_bool
+            lib.AXIsProcessTrusted.argtypes = []
+            return bool(lib.AXIsProcessTrusted())
+        except Exception:
+            return None
+
     def start(self):
         """Start listening for keyboard events."""
         from pynput import keyboard
+        trusted = self._is_accessibility_trusted()
+        if trusted is False:
+            print(
+                "[KeyboardListener] Accessibility trust is OFF. "
+                "Terminal may not receive global key events."
+            )
+        elif trusted is True:
+            print(
+                "[KeyboardListener] Accessibility trust is ON. "
+                "If key events still do not arrive, also check Input Monitoring."
+            )
         self._listener = keyboard.Listener(
             on_press=self._on_press,
             on_release=self._on_release,

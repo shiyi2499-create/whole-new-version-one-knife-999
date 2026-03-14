@@ -1,0 +1,15 @@
+prompt_index,timestamp_ns,prompt_text,typed_text,match
+0,13271244375,student 12 solved 8 math problems before dinner,student 12 solved 8 math problems before dinner,YES
+1,45550082916,chapter 15 includes 4 examples on linear models,chapter 15 includes 4 examples on linear models,YES
+2,82575900500,exam room 6 opens at 8 30 for section 2,exam room 6 opens at 8 30 for section 2,YES
+3,108825765166,the class average was 84 on quiz 9,the class average was 84 on quiz 9,YES
+4,132686747750,read pages 50 to 63 and write summary 1,read pages 50 to 63 and write summary 1,YES
+5,158072424166,team 3 built 2 prototypes in week 7,team 3 built 2 prototypes in week 7,YES
+6,185742470166,lab group 5 measured 0 25 volts at node b,lab group 5 measured 0 25 volts at node b,YES
+7,212904684791,history unit 4 covers years 1914 to 1918,history unit 4 covers years 1914 to 1918,YES
+8,240426199958,practice set 11 has 30 short questions,practice set 11 has 30 short questions,YES
+9,262129618500,submit homework 10 before 23 59 tonight,submit homework 10 before 23 59 tonight,YES
+10,295819206125,score target is 95 after 14 study days,score target is 95 after 14 study days,YES
+11,321376805458,library desk 2 issued book 34017,library desk 2 issued book 34017,YES
+12,340278426291,course code cs101 meets on monday at 9,course code cs101,NO
+12,353390290333,course code cs101 meets on monday at 9,course code cs101 meets on monday at 9,YES

@@ -65,11 +65,13 @@ class CollectorConfig:
         os.makedirs(self.RAW_DIR, exist_ok=True)
         os.makedirs(self.PROCESSED_DIR, exist_ok=True)
 
-    def session_prefix(self, mode: str, group: int = 0, part: int = 0) -> str:
+    def session_prefix(self, mode: str, group: int = 0, part: int = 0, variant: str = "") -> str:
         """Generate a filename prefix like: p01_single_key_g1_20260306_143022"""
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        variant = (variant or "").strip().lower()
+        variant_part = f"_{variant}" if variant else ""
         if group > 0:
-            return f"{self.PARTICIPANT_ID}_{mode}_g{group}_{ts}"
+            return f"{self.PARTICIPANT_ID}_{mode}{variant_part}_g{group}_{ts}"
         if part > 0:
-            return f"{self.PARTICIPANT_ID}_{mode}_part{part}_{ts}"
-        return f"{self.PARTICIPANT_ID}_{mode}_{ts}"
+            return f"{self.PARTICIPANT_ID}_{mode}{variant_part}_part{part}_{ts}"
+        return f"{self.PARTICIPANT_ID}_{mode}{variant_part}_{ts}"

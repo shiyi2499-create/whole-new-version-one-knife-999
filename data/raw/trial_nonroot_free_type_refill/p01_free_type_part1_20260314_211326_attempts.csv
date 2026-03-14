@@ -1,0 +1,14 @@
+prompt_index,attempt_index,attempt_start_ns,submit_ns,elapsed_ms,prompt_text,typed_text,match,backspace_count,typed_char_count,keypress_count,rate_now_hz,rate_median_hz_recent,rate_min_hz_recent,rate_max_hz_recent
+0,1,61887276416,115416287041,53529.01,the quick brown fox jumps over the lazy dog,the quick brown fox jumps over the lazy dog,YES,0,43,44,206.96,205.96,185.54,206.96
+1,1,115416777291,143791483625,28374.71,pack my box with five dozen liquor jugs,pack my box with five dozen liquor jugs,YES,0,39,40,205.96,205.96,187.61,205.96
+2,1,143791838916,170609713833,26817.87,how vexingly quick daft zebras jump,how vexingly quick daft zebras jump,YES,0,35,36,207.25,205.96,187.67,207.25
+3,1,170610092166,192348339166,21738.25,the five boxing wizards jump quickly,the five boxing wizards jump quickly,YES,0,36,37,207.94,205.96,186.06,207.94
+4,1,192348704125,215926805791,23578.10,sphinx of black quartz judge my vow,sphinx of black quartz judge my vow,YES,0,35,36,205.98,204.97,185.07,205.98
+5,1,215927215958,246871828375,30944.61,i need to buy some groceries from the store today,i need to buy some groceries from the store today,YES,0,49,50,206.44,205.30,183.58,206.44
+6,1,246872244666,277557832041,30685.59,please send me the report before friday afternoon,please send me the report before friday afternoon,YES,0,49,50,205.97,205.96,185.07,205.97
+7,1,277558287750,306611090791,29052.80,she walked quickly through the park and sat on a bench,she walked quickly through the park and sat on a bench,YES,0,54,55,207.95,207.19,185.86,207.95
+8,1,306611499791,331282021041,24670.52,we should meet at the coffee shop around noon,we should meet at the coffee shop around noon,YES,0,45,46,205.96,205.96,185.26,205.96
+9,1,331282564583,365430494083,34147.93,the weather forecast says it will rain tomorrow morning,the weather forecast says it will rain tomorrow morning,YES,0,55,56,186.09,187.24,186.09,208.53
+10,1,365430841541,394669643625,29238.80,can you help me fix this problem with my computer,can you help me fix this problem with my computer,YES,0,49,50,185.07,205.96,185.07,206.53
+11,1,394670071375,426157963166,31487.89,he finished reading the entire book in just two days,he finished reading the entire book in just two days,YES,0,52,53,185.25,206.38,185.25,206.96
+12,1,426158413791,454785094708,28626.68,my favorite subject in school was always mathematics,my favorite subject in school was always mathematics,YES,0,52,53,208.56,205.96,185.87,208.56
