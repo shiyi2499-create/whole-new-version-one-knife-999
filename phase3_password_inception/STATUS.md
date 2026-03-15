@@ -110,6 +110,31 @@ Interpretation:
 - limited password-style adaptation can substantially recover performance
 - collection is now continuing from `part 11` onward in the same `len_8` pool
 
+4. The result remains positive after scaling to the full `200`-string pool
+   - fixed `160/40` split:
+     - `char_top1 = 73.4%`
+     - `char_top3 = 97.8%`
+     - `char_top5 = 99.1%`
+     - `sequence_top100 = 65.0%`
+     - `CER = 26.6%`
+
+5. The adaptation result is stable under random group splits
+   - `5` random `16/4` splits:
+     - `char_top1 mean/std = 67.3% / 1.0%`
+     - `char_top3 mean/std = 91.7% / 1.2%`
+     - `char_top5 mean/std = 96.8% / 0.6%`
+     - `sequence_top100 mean/std = 46.5% / 5.1%`
+     - `CER mean/std = 32.7% / 1.0%`
+
+6. `password only` is viable, but weaker and less stable than
+   `single_key + password adaptation`
+   - `5` random `16/4` splits:
+     - `char_top1 mean/std = 66.9% / 2.8%`
+     - `char_top3 mean/std = 91.0% / 2.3%`
+     - `char_top5 mean/std = 95.4% / 2.0%`
+     - `sequence_top100 mean/std = 38.0% / 10.2%`
+     - `CER mean/std = 33.1% / 2.8%`
+
 ## Immediate next step
 
 Use the `len_8` result as the first stable password-route reference point, then

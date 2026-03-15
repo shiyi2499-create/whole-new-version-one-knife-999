@@ -90,3 +90,79 @@ The current best-supported statement is:
 > input in a zero-shot setting, but a modest amount of password-style
 > adaptation strongly improves top-k character accuracy and bounded-guess
 > sequence success.
+
+## Expanded `200`-string result
+
+The `len_8` pool was then extended from the first `100` strings to the full
+`200`-string pool (`20` parts total).
+
+### Fixed 160/40 split
+
+Protocol:
+
+- baseline from `single_key + boost`
+- password adaptation on parts `1-16` (`160` strings)
+- held-out test on parts `17-20` (`40` strings)
+
+Metrics:
+
+- `char_top1 = 73.4%`
+- `char_top3 = 97.8%`
+- `char_top5 = 99.1%`
+- `sequence_top100 = 65.0%`
+- `CER = 26.6%`
+
+Interpretation:
+
+- adding more password-style data continues to help
+- the route remains positive after scaling beyond the initial `100`-string pool
+
+### Multi-split adaptation stability
+
+Protocol:
+
+- total pool: `20` password parts
+- repeated random group splits
+- per split:
+  - `16` parts for password adaptation
+  - `4` parts held out for test
+- `5` random splits
+
+Summary:
+
+- `char_top1 mean/std = 67.3% / 1.0%`
+- `char_top3 mean/std = 91.7% / 1.2%`
+- `char_top5 mean/std = 96.8% / 0.6%`
+- `sequence_top100 mean/std = 46.5% / 5.1%`
+- `CER mean/std = 32.7% / 1.0%`
+
+Interpretation:
+
+- the positive adaptation result is not a one-off lucky split
+- the password route remains stable under repeated random group-level partitioning
+
+### Multi-split password-only comparison
+
+Protocol:
+
+- no `single_key + boost`
+- train directly on password parts
+- repeated random group splits
+- per split:
+  - `16` parts train
+  - `4` parts test
+- `5` random splits
+
+Summary:
+
+- `char_top1 mean/std = 66.9% / 2.8%`
+- `char_top3 mean/std = 91.0% / 2.3%`
+- `char_top5 mean/std = 95.4% / 2.0%`
+- `sequence_top100 mean/std = 38.0% / 10.2%`
+- `CER mean/std = 33.1% / 2.8%`
+
+Interpretation:
+
+- `password only` is viable, but does not outperform
+  `single_key + password adaptation`
+- the isolated-key baseline still appears to provide useful prior structure

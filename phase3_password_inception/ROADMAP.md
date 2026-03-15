@@ -29,7 +29,7 @@ What we do **not** have yet:
 1. a final multi-length password story (`len_8`, `len_10`, `len_12`)
 2. symbol-inclusive password evaluation
 3. a continuous-stream keystroke onset detector
-4. a final clean ablation table for zero-shot vs adapted password inference
+4. a final clean ablation table beyond the current `len_8` results
 
 ## Immediate Diagnostic Rule
 
@@ -141,6 +141,18 @@ Status:
   - `char_top5 = 96.2%`
   - `sequence_top100 = 35.0%`
   - `CER = 37.5%`
+- fixed `160/40` result is stronger:
+  - `char_top1 = 73.4%`
+  - `char_top3 = 97.8%`
+  - `char_top5 = 99.1%`
+  - `sequence_top100 = 65.0%`
+  - `CER = 26.6%`
+- `5` random `16/4` splits remain positive:
+  - `char_top1 mean/std = 67.3% / 1.0%`
+  - `char_top3 mean/std = 91.7% / 1.2%`
+  - `char_top5 mean/std = 96.8% / 0.6%`
+  - `sequence_top100 mean/std = 46.5% / 5.1%`
+  - `CER mean/std = 32.7% / 1.0%`
 - now promoted to the main experimental route
 
 ### Track D: Keystroke Onset Detection
@@ -187,8 +199,9 @@ Recommended role:
 
 Status:
 
-- not implemented
-- lower priority than Tracks A/B/C
+- implemented as a comparison
+- current result is weaker and less stable than `single_key + password adaptation`
+- remains an auxiliary comparison rather than the main route
 
 ## Vocabulary Coverage Plan
 
