@@ -13,6 +13,7 @@ It uses group-level splits over password parts, rather than a single fixed
 from __future__ import annotations
 
 import argparse
+import inspect
 import copy
 import json
 import os
@@ -90,7 +91,7 @@ def main():
 
     X, _, y_enc, classes = load_merged_training_data(args.merged_path)
     print(f"Loaded baseline training data: X={X.shape}, classes={len(classes)}")
-    train_final_inception(
+    train_kwargs = dict(
         X=X,
         y_enc=y_enc,
         classes=classes,
@@ -102,8 +103,10 @@ def main():
         batch_size=args.baseline_batch_size,
         lr=args.baseline_lr,
         patience=args.baseline_patience,
-        augment=True,
     )
+    if "augment" in inspect.signature(train_final_inception).parameters:
+        train_kwargs["augment"] = True
+    train_final_inception(**train_kwargs)
 
     base_model, classes, means, stds = load_final_inception(
         args.checkpoint_path, args.scaler_path, device

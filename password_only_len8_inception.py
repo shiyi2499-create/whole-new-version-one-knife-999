@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import inspect
 from statistics import mean, pstdev
 
 import numpy as np
@@ -123,7 +124,7 @@ def main():
         X_train, y_train = flatten_items(train_sequences, class_to_idx)
         ckpt_path = os.path.join(args.checkpoint_dir, f"split_{len(split_rows)+1}.pt")
         scaler_path = os.path.join(args.checkpoint_dir, f"split_{len(split_rows)+1}_scaler.npz")
-        train_final_inception(
+        train_kwargs = dict(
             X=X_train,
             y_enc=y_train,
             classes=FULL_CLASSES,
@@ -135,8 +136,10 @@ def main():
             batch_size=args.batch_size,
             lr=args.lr,
             patience=args.patience,
-            augment=True,
         )
+        if "augment" in inspect.signature(train_final_inception).parameters:
+            train_kwargs["augment"] = True
+        train_final_inception(**train_kwargs)
         model, classes, means, stds = load_final_inception(ckpt_path, scaler_path, device)
         metrics, _ = evaluate_sequences(
             test_sequences,
