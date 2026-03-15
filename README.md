@@ -189,12 +189,21 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
   - 已完成 `single_key + boost` 扫描与非目标会话清理
 - 🟩【已完成】Step 2: single_key 补采
   - g1-g6 高质量数据已补齐，g8 补强已完成
-- 🟨【进行中】Step 3: password 数据集重采（慢速、固定手指、len=8）
+- 🟩【已完成】Step 3: password 数据集采集（慢速、固定手指、len=8）
   - 协议：`a-z0-9`、长度 `8`、共 `100` 条、`10 × 10`
-  - 目标：先在低重叠输入条件下跑通 password-style 攻击闭环
-  - 说明：句子型 free_type 暂不作为主 headline；当前优先采 `data/raw/password/len_8`
-- 🟨【进行中】Step 4: password-route 闭环评估（新数据）
+  - 目录：`data/raw/password/len_8`
+  - 质量：全 `10` 组已完成，采样率稳定在 `~200Hz`
+- 🟨【进行中】Step 4: password-route 闭环评估与 adaptation
   - `phase3_password_inception/run_password_closure_inception.py`
+  - `adapt_password_len8_inception.py`
+  - 当前结论：
+    - zero-shot 很弱，说明 `single_key -> password` 域偏移明显
+    - adaptation 后显著提升：
+      - `char_top1 = 62.5%`
+      - `char_top3 = 87.5%`
+      - `char_top5 = 96.2%`
+      - `sequence_top100 = 35.0%`
+      - `CER = 37.5%`
   - 指标：`char top-1/top-3/top-5`、`sequence top-10/top-50/top-100`、`CER`
 - 🟥【待办】Step 5: continuous stream 中的 keystroke onset detection
   - 目标：在连续 IMU 流中自动判断“何时发生按键”

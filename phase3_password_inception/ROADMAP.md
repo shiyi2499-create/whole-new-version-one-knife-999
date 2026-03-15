@@ -25,10 +25,10 @@ We already have:
 
 What we do **not** have yet:
 
-1. a full Phase 2 "best recipe" InceptionTime training path inside the password route
-2. a free_type adaptation / fine-tuning stage
-3. a final top-N password attack story with held-out evaluation and clean ablations
-4. a continuous-stream keystroke onset detector
+1. a final multi-length password story (`len_8`, `len_10`, `len_12`)
+2. symbol-inclusive password evaluation
+3. a continuous-stream keystroke onset detector
+4. a final clean ablation table for zero-shot vs adapted password inference
 
 ## Immediate Diagnostic Rule
 
@@ -86,7 +86,7 @@ Status:
 - implemented
 - should remain the first baseline for the password route
 
-### Track B: Full-Recipe InceptionTime
+### Track B: Strong InceptionTime Password Route
 
 Goal:
 
@@ -108,10 +108,10 @@ Planned upgrades:
 
 Status:
 
-- not implemented yet
-- high priority
+- implemented enough to reproduce a strong isolated-key diagnostic
+- no longer the main blocker
 
-### Track C: Password / Free-Type Adaptation
+### Track C: Password Adaptation
 
 Goal:
 
@@ -133,8 +133,14 @@ Suggested split style:
 
 Status:
 
-- not implemented yet
-- medium-high priority after Track B
+- implemented
+- first `len_8` result is positive:
+  - `char_top1 = 62.5%`
+  - `char_top3 = 87.5%`
+  - `char_top5 = 96.2%`
+  - `sequence_top100 = 35.0%`
+  - `CER = 37.5%`
+- now promoted to the main experimental route
 
 ### Track D: Keystroke Onset Detection
 
@@ -156,7 +162,7 @@ Status:
 - not implemented yet
 - high value
 
-### Track E: Pure Password / Free-Type Model
+### Track E: Pure Password Model
 
 Goal:
 
@@ -233,11 +239,14 @@ If we continue this route, the most sensible order is:
 
 ## Current Practical Interpretation
 
-The current password-route result should be read as:
+The current password-route result should now be read as:
 
-- the no-space evaluation pipeline works
-- top-k / top-N reporting is now in place
-- low current top-1 accuracy does not yet falsify the attack story
+- the no-space password evaluation pipeline works
+- the trainer is strong on isolated-key held-out evaluation
+- direct zero-shot transfer to continuous password input is weak
+- password-style adaptation substantially improves performance
+- the present bottleneck is domain shift, not obviously broken collection or
+  model training
 - we still need stronger baseline training and possibly adaptation before making
   a final scientific claim
 
