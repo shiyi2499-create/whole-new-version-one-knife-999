@@ -34,6 +34,15 @@ Key accuracies from that snapshot:
 
 So this route intentionally uses `InceptionTime` as the baseline backbone.
 
+Current training defaults are now much closer to the strong Phase 2
+InceptionTime recipe:
+- `AdamW`
+- cosine annealing scheduler
+- Phase 2-style augmentation (`shift / noise / scale / ch_drop`)
+- `epochs=280`
+- `patience=60`
+- `batch_size=32`
+
 Related notes:
 - [STATUS.md](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/STATUS.md)
 - [ROADMAP.md](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/ROADMAP.md)

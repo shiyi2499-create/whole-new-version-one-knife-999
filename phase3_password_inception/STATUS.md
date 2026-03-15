@@ -35,12 +35,21 @@ It exists to avoid changing the main workspace under
    - sentence-style free_type is kept, but not the current headline route
    - `continuous` bridge prompts are optional rather than required
 
+5. The password-route trainer is now closer to the original strong Phase 2
+   Inception recipe
+   - same InceptionTime family
+   - AdamW + cosine schedule
+   - Phase 2-style augmentation family
+   - stronger defaults (`epochs=280`, `patience=60`, `batch_size=32`)
+
 ## What has not been claimed yet
 
 1. We are not claiming the local smoke-test accuracy is meaningful
 2. We are not claiming sentence-level natural-language recovery is solved
 3. We are not claiming fast-overlap typing is solved
 4. We are not claiming blind onset detection is solved yet
+5. We are still not claiming this is a perfect byte-for-byte clone of the full
+   Phase 2 benchmark pipeline (e.g. it is not the 5-fold benchmark script)
 
 ## Immediate next step
 

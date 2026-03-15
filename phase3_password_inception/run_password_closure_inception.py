@@ -10,6 +10,7 @@ Design goals:
 - exclude space / enter / backspace from the classifier target space
 - evaluate password-style continuous character strings
 - report character-level and exact-string metrics without relying on LM
+- stay reasonably close to the strongest Phase 2 InceptionTime training recipe
 """
 
 from __future__ import annotations
@@ -85,6 +86,32 @@ def set_global_seed(seed: int = 42):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def augment_batch(X_batch: torch.Tensor, p: float = 0.5) -> torch.Tensor:
+    """
+    Match the Phase 2 augmentation family as closely as possible:
+    random shift, additive noise, scaling, and channel dropout.
+    """
+    B, T, C = X_batch.shape
+    X_aug = X_batch.clone()
+    for i in range(B):
+        if np.random.random() > p:
+            continue
+        aug_type = np.random.choice(["shift", "noise", "scale", "ch_drop"])
+        if aug_type == "shift":
+            shift = np.random.randint(-T // 10, T // 10 + 1)
+            X_aug[i] = torch.roll(X_aug[i], shifts=shift, dims=0)
+        elif aug_type == "noise":
+            std = X_aug[i].std() * 0.01
+            X_aug[i] += torch.randn_like(X_aug[i]) * std
+        elif aug_type == "scale":
+            scale = 0.8 + 0.4 * np.random.random()
+            X_aug[i] *= scale
+        elif aug_type == "ch_drop":
+            ch = np.random.randint(0, C)
+            X_aug[i][:, ch] = 0.0
+    return X_aug
 
 
 @dataclass
@@ -266,10 +293,11 @@ def train_final_inception(
     scaler_path: str,
     device: torch.device,
     force: bool = False,
-    epochs: int = 120,
-    batch_size: int = 64,
+    epochs: int = 280,
+    batch_size: int = 32,
     lr: float = 8e-4,
-    patience: int = 20,
+    patience: int = 60,
+    augment: bool = True,
 ):
     if (not force) and os.path.exists(checkpoint_path) and os.path.exists(scaler_path):
         print(f"  Found saved model: {checkpoint_path}")
@@ -307,7 +335,15 @@ def train_final_inception(
         n_classes=n_classes,
     ).to(device)
 
-    loader = DataLoader(TensorDataset(X_train, y_train), batch_size=batch_size, shuffle=True)
+    train_dataset = TensorDataset(X_train, y_train)
+    dl_gen = torch.Generator()
+    dl_gen.manual_seed(42)
+    loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        generator=dl_gen,
+    )
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
@@ -323,6 +359,8 @@ def train_final_inception(
         correct = 0
         total = 0
         for xb, yb in loader:
+            if augment:
+                xb = augment_batch(xb, p=0.5)
             xb = xb.to(device)
             yb = yb.to(device)
             optimizer.zero_grad(set_to_none=True)
@@ -347,7 +385,7 @@ def train_final_inception(
             train_acc = correct / max(total, 1)
             print(f"  Epoch {epoch+1:3d}: train_acc={train_acc:.3f} val_acc={val_acc:.3f}")
         if patience_ctr >= patience:
-            print(f"  Early stop at epoch {epoch+1}")
+            print(f"  Early stop at epoch {epoch+1} (patience={patience})")
             break
 
     if best_state is None:
@@ -387,6 +425,8 @@ def discover_freetype_sessions(freetype_dirs: list[str]) -> list[str]:
             print(f"  ⚠ Not found: {rd}")
             continue
         for f in sorted(os.listdir(rd)):
+            if f.startswith("."):
+                continue
             if "_free_type_" in f and f.endswith("_sensor.csv"):
                 prefix = os.path.join(rd, f.replace("_sensor.csv", ""))
                 if os.path.exists(prefix + "_events.csv"):
@@ -645,10 +685,12 @@ def parse_args():
     parser.add_argument("--checkpoint-path", default="results/inception_password_final.pt")
     parser.add_argument("--scaler-path", default="results/inception_password_scaler.npz")
     parser.add_argument("--report-path", default="results/password_closure_inception.json")
-    parser.add_argument("--epochs", type=int, default=120)
-    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--epochs", type=int, default=280)
+    parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--lr", type=float, default=8e-4)
-    parser.add_argument("--patience", type=int, default=20)
+    parser.add_argument("--patience", type=int, default=60)
+    parser.add_argument("--no-augment", action="store_true",
+                        help="Disable Phase 2-style time-series augmentation during training.")
     parser.add_argument("--force-train", action="store_true")
     parser.add_argument("--no-train", action="store_true")
     parser.add_argument("--train-max-samples", type=int, default=0,
@@ -682,6 +724,7 @@ def main():
             batch_size=args.batch_size,
             lr=args.lr,
             patience=args.patience,
+            augment=(not args.no_augment),
         )
     else:
         if not (os.path.exists(args.checkpoint_path) and os.path.exists(args.scaler_path)):
