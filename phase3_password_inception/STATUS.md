@@ -119,3 +119,27 @@ expand along one of these axes:
 2. extend to `len_10` / `len_12`
 3. add symbol classes after the alphanumeric route is stable
 4. add onset detection for continuous stream segmentation
+
+## Current model-selection policy
+
+For the immediate next password-route experiments, we keep `InceptionTime` as
+the fixed backbone.
+
+Reason:
+
+- we first want a clean comparison of protocol choices:
+  - zero-shot
+  - password adaptation
+  - password-only
+  - multi-split stability
+
+We explicitly postpone route-specific model comparison until the password
+protocol itself is stable.
+
+This matters because:
+
+- `InceptionTime` is currently the strongest visible Phase 2 baseline
+- but it is **not guaranteed** to remain the best model once the task becomes
+  `single_key + password adaptation` or `password only`
+- that comparison should be done later as a controlled ablation, not mixed into
+  the current protocol-validation stage

@@ -320,6 +320,41 @@ In short:
 5. only after that decide whether targeted extra single-key collection is worth
    the cost
 
+## Model Comparison Policy
+
+Current decision:
+
+- keep `InceptionTime` fixed as the backbone for the next password-route
+  experiments
+- do **not** mix in model changes while we are still validating:
+  - multi-split stability
+  - `single_key + password adaptation`
+  - `password only`
+
+Why:
+
+1. `InceptionTime` is the strongest visible Phase 2 baseline so far
+2. we first need a clean comparison of **data/training protocol choices**
+3. changing the model now would confound:
+   - domain-shift diagnosis
+   - adaptation benefit
+   - password-only upper-bound estimation
+
+Planned later comparison:
+
+- once the password-route protocol is stable, run a smaller route-specific model
+  comparison under the same split protocol
+- likely candidates:
+  - `InceptionTime`
+  - `Transformer`
+  - `1D CNN` or `CNN_BiLSTM`
+
+Important note:
+
+- the best model for `single_key` is **not guaranteed** to be the best model
+  for `single_key + password adaptation` or `password only`
+- this is a later paper-quality ablation, not the current blocking step
+
 ## Current Main Story
 
 The current best story is:
