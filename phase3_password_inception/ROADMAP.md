@@ -250,6 +250,75 @@ The current password-route result should now be read as:
 - we still need stronger baseline training and possibly adaptation before making
   a final scientific claim
 
+## Why Strong Single-Key Accuracy Does Not Automatically Transfer
+
+Even though password evaluation also cuts per-key windows, the resulting windows
+are not drawn from the same distribution as isolated `single_key` samples.
+
+Main reasons:
+
+1. the finger and hand state before each key is different in continuous input
+2. neighboring keys change the local motion context
+3. continuous typing introduces preparation and recovery motion that is absent
+   in isolated-key collection
+4. the same nominal key can therefore occupy a meaningfully different feature
+   distribution in password mode
+
+In short:
+
+- the model is still asked to classify one key window at a time
+- but the password-mode windows are not i.i.d. copies of isolated-key windows
+- this explains why strong isolated-key top-k accuracy can coexist with weak
+  zero-shot password performance
+
+## ROI Priority List For Improving `len_8`
+
+### Tier 1: Highest ROI
+
+1. add more password-style adaptation data
+   - this is the only thing already proven to move the main metric sharply
+   - the first `80/20` result is strongly positive
+
+2. repeat `len_8` collection once more for stability
+   - confirms the current result is not a one-off split artifact
+   - gives us more password-domain data without changing task definition
+
+3. run ablations on adaptation size
+   - e.g. `20 / 40 / 60 / 80` password strings
+   - tells us how much password data is actually needed
+
+### Tier 2: Medium ROI
+
+4. targeted single-key boost for password-confused characters
+   - only worth doing after we inspect password confusion patterns
+   - useful if a small set of characters dominates the residual error
+
+5. per-position / per-character error audit on `len_8`
+   - helps identify whether errors cluster at early vs late characters or at
+     specific keys
+
+6. test a slightly lighter adaptation schedule vs a stronger one
+   - useful for checking whether current gains are training-limited
+
+### Tier 3: Lower ROI Right Now
+
+7. broadly collecting many more generic single-key sessions
+   - likely improves isolated-key accuracy more than password-domain accuracy
+   - unlikely to close the main domain gap by itself
+
+8. collecting both single-key and password in lockstep without analysis
+   - risks increasing both datasets while leaving the main gap unchanged
+   - should be avoided unless guided by ablation results
+
+## Current Recommended Plan For `len_8`
+
+1. keep the current `single_key + boost` baseline fixed
+2. treat password-domain data as the main lever for improvement
+3. first replicate `len_8`
+4. then run adaptation-size ablations
+5. only after that decide whether targeted extra single-key collection is worth
+   the cost
+
 ## Current Main Story
 
 The current best story is:
