@@ -30,6 +30,17 @@ What we do **not** have yet:
 3. a final top-N password attack story with held-out evaluation and clean ablations
 4. a continuous-stream keystroke onset detector
 
+## Immediate Diagnostic Rule
+
+Before over-interpreting a low password zero-shot result, we should first run a
+held-out single-key diagnostic using the same current Phase 3 Inception
+trainer.
+
+Reason:
+
+- this separates "trainer/recipe weakness" from "password domain gap"
+- it is the fastest way to explain a counterintuitively low password result
+
 ## Why The Current Low Result Is Not Final
 
 The current password-style result should be treated as an early prototype result,

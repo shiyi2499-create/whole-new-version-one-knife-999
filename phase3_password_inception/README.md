@@ -47,10 +47,13 @@ Related notes:
 - [STATUS.md](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/STATUS.md)
 - [ROADMAP.md](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/ROADMAP.md)
 - [SERVER_SYNC.md](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/SERVER_SYNC.md)
+- [diagnose_singlekey_inception.py](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/diagnose_singlekey_inception.py)
 
 ## Main script
 
 - [run_password_closure_inception.py](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/run_password_closure_inception.py)
+- Diagnostic helper:
+  - [diagnose_singlekey_inception.py](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/diagnose_singlekey_inception.py)
 
 What it does:
 
@@ -139,3 +142,20 @@ Its purpose was just to verify that the code path runs to completion.
 
 For password-like attacks, these top-k and candidate-hit metrics are often more
 informative than exact top-1 string match alone.
+
+## Recommended diagnostic before over-interpreting low password results
+
+If password-route zero-shot accuracy looks unexpectedly low, first run the
+diagnostic single-key evaluation:
+
+```bash
+python phase3_password_inception/diagnose_singlekey_inception.py \
+  --device cuda \
+  --merged-path data/processed/merged_dataset.npz \
+  --report-path results/diagnose_singlekey_inception.json
+```
+
+Interpretation:
+- if this diagnostic is also weak, the trainer/recipe is underperforming
+- if this diagnostic is strong but password zero-shot is weak, the main issue is
+  domain shift from isolated keys to continuous password input
