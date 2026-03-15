@@ -34,7 +34,6 @@ if PHASE3_DIR not in sys.path:
 
 from run_password_closure_inception import (  # noqa: E402
     InceptionTimeClassifier,
-    augment_batch,
     build_no_space_sequences,
     discover_freetype_sessions,
     evaluate_sequences,
@@ -44,6 +43,30 @@ from run_password_closure_inception import (  # noqa: E402
     set_global_seed,
     train_final_inception,
 )
+
+try:  # noqa: E402
+    from run_password_closure_inception import augment_batch  # type: ignore
+except ImportError:  # Backward-compatible fallback for older server copies.
+    def augment_batch(X_batch: torch.Tensor, p: float = 0.5) -> torch.Tensor:
+        B, T, C = X_batch.shape
+        X_aug = X_batch.clone()
+        for i in range(B):
+            if np.random.random() > p:
+                continue
+            aug_type = np.random.choice(["shift", "noise", "scale", "ch_drop"])
+            if aug_type == "shift":
+                shift = np.random.randint(-T // 10, T // 10 + 1)
+                X_aug[i] = torch.roll(X_aug[i], shifts=shift, dims=0)
+            elif aug_type == "noise":
+                std = X_aug[i].std() * 0.01
+                X_aug[i] += torch.randn_like(X_aug[i]) * std
+            elif aug_type == "scale":
+                scale = 0.8 + 0.4 * np.random.random()
+                X_aug[i] *= scale
+            elif aug_type == "ch_drop":
+                ch = np.random.randint(0, C)
+                X_aug[i][:, ch] = 0.0
+        return X_aug
 
 
 PART_RE = re.compile(r"_part(\d+)_")
