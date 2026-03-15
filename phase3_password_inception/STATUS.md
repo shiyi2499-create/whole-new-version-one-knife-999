@@ -5,7 +5,7 @@
 This folder is a Phase 3 experiment track for:
 
 - `InceptionTime` baseline
-- no-space continuous-string inference
+- password-style continuous-string inference
 - password-like threat model
 - top-k / top-N attack-facing evaluation
 
@@ -44,10 +44,10 @@ It exists to avoid changing the main workspace under
 
 ## Immediate next step
 
-Run the InceptionTime password/continuous-string closure on the real dataset:
+Run the InceptionTime password closure on the real dataset:
 
 - baseline training source: `single_key + boost`
-- closure evaluation source: `trial_nonroot_free_type_refill`
+- closure evaluation source: `data/raw/password/len_8`
 
 ## Expected output on the server
 

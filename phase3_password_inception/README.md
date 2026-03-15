@@ -1,6 +1,6 @@
 # Phase 3 Password / Continuous-String Route
 
-This folder isolates a no-space closure path that is closer to password-like
+This folder isolates a password-style closure path that is closer to
 continuous string recovery than sentence reconstruction.
 
 ## Why this route exists
@@ -15,7 +15,7 @@ several choices that are not ideal for the attack story we want to tell:
 
 For the current paper story, the cleaner task is:
 
-`non-root IMU access -> isolated-key baseline -> no-space continuous-string closure`
+`non-root IMU access -> isolated-key baseline -> password-style continuous-string closure`
 
 That is a better fit for password-like inputs and keeps the contribution focused
 on attack feasibility rather than language reconstruction.
@@ -48,7 +48,7 @@ What it does:
 1. load `merged_dataset.npz` and train a final `InceptionTime` baseline
 2. filter the classifier target space to `[a-z0-9]` only
 3. ignore `space`, `enter`, `backspace`, and other non-password keys
-4. build no-space sequences from free_type sessions using `typed_text`
+4. evaluate password-style continuous strings
 5. evaluate:
    - exact sequence match
    - character top-1 / top-3 / top-5 accuracy
@@ -57,10 +57,18 @@ What it does:
 
 ## Expected data layout
 
-Defaults assume the same layout used in the non-root trial workspace:
+Current v1 password collection protocol:
+
+- charset: `a-z0-9`
+- length: `8`
+- total strings: `100`
+- grouping: `10 × 10`
+- raw path: `data/raw/password/len_8`
+
+Defaults assume the current main workspace layout:
 
 - `data/processed/merged_dataset.npz`
-- `data/raw/trial_nonroot_free_type_refill/`
+- `data/raw/password/len_8/`
 
 Override paths with CLI flags if needed.
 
@@ -68,8 +76,8 @@ Override paths with CLI flags if needed.
 
 - `merged_dataset.npz` is still the main baseline training set
 - it should come from `single_key + boost`
-- `trial_nonroot_free_type_refill` is not the baseline training source
-- it is used for no-space closure evaluation
+- `data/raw/password/len_8` is not the baseline training source
+- it is used for password-style closure evaluation
 
 In other words, this route does **not** train the baseline on free_type first.
 It trains on isolated-key data, then checks whether that baseline can recover
@@ -81,7 +89,7 @@ continuous strings.
 python phase3_password_inception/run_password_closure_inception.py \
   --device cuda \
   --merged-path data/processed/merged_dataset.npz \
-  --free-type-dirs data/raw/trial_nonroot_free_type_refill \
+  --free-type-dirs data/raw/password/len_8 \
   --checkpoint-path results/inception_password_final.pt \
   --scaler-path results/inception_password_scaler.npz \
   --report-path results/password_closure_inception.json \

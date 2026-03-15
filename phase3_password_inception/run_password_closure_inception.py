@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Password-like / continuous-string closure using an InceptionTime baseline.
+Password-style continuous-string closure using an InceptionTime baseline.
 
 This script is intentionally self-contained so it can live outside the main
 training workspace and still be copied into another machine/server.
@@ -8,7 +8,7 @@ training workspace and still be copied into another machine/server.
 Design goals:
 - train the final baseline on merged single_key + boost data
 - exclude space / enter / backspace from the classifier target space
-- evaluate free_type as no-space continuous character strings
+- evaluate password-style continuous character strings
 - report character-level and exact-string metrics without relying on LM
 """
 
@@ -633,14 +633,14 @@ def evaluate_sequences(
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Inception no-space continuous-string closure")
+    parser = argparse.ArgumentParser(description="Inception password-style continuous-string closure")
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     parser.add_argument("--merged-path", default="data/processed/merged_dataset.npz")
     parser.add_argument(
         "--free-type-dirs",
         nargs="+",
-        default=["data/raw/trial_nonroot_free_type_refill"],
-        help="One or more directories containing *_free_type_* raw files.",
+        default=["data/raw/password/len_8"],
+        help="One or more directories containing password/free_type raw files.",
     )
     parser.add_argument("--checkpoint-path", default="results/inception_password_final.pt")
     parser.add_argument("--scaler-path", default="results/inception_password_scaler.npz")
@@ -694,8 +694,8 @@ def main():
 
     sessions = discover_freetype_sessions(args.free_type_dirs)
     if not sessions:
-        raise RuntimeError("No free_type sessions found.")
-    print(f"Found {len(sessions)} free_type sessions")
+        raise RuntimeError("No password/free_type sessions found.")
+    print(f"Found {len(sessions)} password/free_type sessions")
 
     sequences = []
     for sess in sessions:

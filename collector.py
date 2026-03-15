@@ -19,7 +19,6 @@ FIXED v3:
 
 Run with:  python3 collector.py --mode single_key
            python3 collector.py --mode free_type --prompt-profile sentence
-           python3 collector.py --mode free_type --prompt-profile continuous
            python3 collector.py --mode free_type --prompt-profile password
            (direct SPU non-root path is preferred; macimu remains optional)
 """
@@ -470,8 +469,10 @@ class DataCollector:
         PROMPTS = profile["prompts"]
         profile_name = profile["name"]
         profile_desc = profile["description"]
+        unit_name_plural = profile.get("unit_name_plural", "prompts")
 
-        # Split into configurable parts (default: 16 groups for 208 prompts)
+        # Split into configurable parts. sentence/continuous keep 16 groups;
+        # password v1 uses 10 groups of 10 strings by default.
         n_parts = self._free_type_parts_total
         part_size = (len(PROMPTS) + n_parts - 1) // n_parts  # ceiling division
         parts = {}
@@ -495,12 +496,12 @@ class DataCollector:
             f"{'='*60}\n"
             f"  Prompt profile: {profile_name}\n"
             f"  Description:    {profile_desc}\n"
-            f"  {part_label}: {len(prompts)} sentences\n"
+            f"  {part_label}: {len(prompts)} {unit_name_plural}\n"
             f"\n"
             f"  How it works:\n"
-            f"    1. A sentence appears → type it exactly\n"
+            f"    1. A prompt appears → type it exactly\n"
             f"    2. Press ENTER to submit\n"
-            f"    3. If correct → next sentence\n"
+            f"    3. If correct → next prompt\n"
             f"       If wrong  → shows the diff, you retype\n"
             f"\n"
             f"  Tips:\n"
@@ -560,9 +561,9 @@ class DataCollector:
 
                 # Display prompt
                 if attempt == 1:
-                    print(f"  ┌─ Sentence {idx+1}/{len(prompts)} ──────────────────")
+                    print(f"  ┌─ Prompt {idx+1}/{len(prompts)} ──────────────────")
                 else:
-                    print(f"  ┌─ Sentence {idx+1}/{len(prompts)} (retry #{attempt}) ───")
+                    print(f"  ┌─ Prompt {idx+1}/{len(prompts)} (retry #{attempt}) ───")
                 print(f"  │  {prompt}")
                 print(f"  └─────────────────────────────────────────")
 
@@ -882,8 +883,10 @@ def main():
              "When used with --mode free_type, prompts are split by --free-groups."
     )
     parser.add_argument(
-        "--free-groups", type=int, default=16,
-        help="Number of groups to split free_type prompts into (default: 16, min: 1)"
+        "--free-groups", type=int, default=0,
+        help="Number of groups to split free_type prompts into. "
+             "Use 0 to follow the profile default "
+             "(sentence/continuous=16, password=10)."
     )
     parser.add_argument(
         "--prompt-profile", choices=["sentence", "continuous", "password"],
@@ -891,6 +894,14 @@ def main():
         help="Prompt profile for free_type mode: sentence | continuous | password"
     )
     args = parser.parse_args()
+
+    effective_free_groups = args.free_groups
+    if args.mode == "free_type":
+        from typing_prompt_profiles import get_prompt_profile
+
+        profile = get_prompt_profile(args.prompt_profile)
+        if effective_free_groups <= 0:
+            effective_free_groups = int(profile.get("default_groups", 16))
 
     cfg = CollectorConfig(
         PARTICIPANT_ID=args.participant,
@@ -947,7 +958,7 @@ def main():
         print(f"  Total:       {len(cfg.KEY_LIST)} keys × {args.repeats} = {total} presses\n")
 
     if args.mode == "free_type" and args.part > 0:
-        print(f"  Part:        {args.part}/{max(1, args.free_groups)}\n")
+        print(f"  Part:        {args.part}/{max(1, effective_free_groups)}\n")
     if args.mode == "free_type":
         print(f"  Prompt set:  {args.prompt_profile}")
     print(f"  euid:        {os.geteuid() if hasattr(os, 'geteuid') else 'N/A'}")
@@ -958,7 +969,7 @@ def main():
         args.mode,
         group,
         free_type_part=args.part,
-        free_type_parts_total=args.free_groups,
+        free_type_parts_total=effective_free_groups,
         prompt_profile=args.prompt_profile,
         single_rate_gate_hz=args.single_gate_rate,
         free_rate_gate_hz=args.free_gate_rate,

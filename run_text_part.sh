@@ -11,6 +11,11 @@ PART="$2"
 RAW_SUBDIR="$3"
 PARTICIPANT="${4:-p01}"
 
+FREE_GROUPS=16
+if [[ "$PROFILE" == "password" ]]; then
+  FREE_GROUPS=10
+fi
+
 cd "$(dirname "$0")"
 
 .venv/bin/python3 collector.py \
@@ -19,6 +24,6 @@ cd "$(dirname "$0")"
   --participant "$PARTICIPANT" \
   --raw-subdir "$RAW_SUBDIR" \
   --part "$PART" \
-  --free-groups 16 \
+  --free-groups "$FREE_GROUPS" \
   --free-gate-rate 150 \
   --precheck-sec 5

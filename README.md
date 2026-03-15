@@ -30,8 +30,9 @@
 - `boost`（g8 补强）已完成并并入训练可用集。
 - 目前 `single_key + boost` 频率扫描为目标域内（无 non-target 会话，按当前容差）。
 - `sentence` 型 free_type 数据保留，但暂时不作为当前主攻路线。
-- 当前 Phase 3 主线改为：`single_key + boost` baseline -> `password-like no-space strings` 测试。
-- `continuous` profile 保留为可选桥接层，但不是当前必做项。
+- 当前 Phase 3 主线改为：`single_key + boost` baseline -> `password` 数据集测试。
+- `password` v1 协议：`a-z0-9`，长度固定 `8`，共 `100` 条，按 `10 × 10` 采集。
+- `continuous` profile 保留为兼容/桥接层，但不是当前主线。
 
 ## 3. 代码入口与职责
 
@@ -60,9 +61,11 @@
   - 补强数据（hard keys）
 - `data/raw/free_type/`
   - free_type 数据
+- `data/raw/password/len_8/`
+  - 当前主线 password 数据目录
+  - 协议：`a-z0-9`、长度 `8`、共 `100` 条、`10 × 10`
 - `data/raw/free_type_sentence_* / free_type_continuous_* / free_type_password_*`
-  - 可按 prompt profile 分开存放，避免后处理混淆
-  - 当前主线优先使用 `free_type_password_*`
+  - 旧版或过渡型 free_type 路径，保留但不作为当前主测试集
 - `data/raw/legacy_round4_ro/`
   - 历史只读备份目录（默认不作为主扫描源）
 
@@ -93,17 +96,14 @@
   --mode free_type --raw-subdir free_type --part 1 --free-groups 16 \
   --free-gate-rate 150 --precheck-sec 5
 
-# password-like strings
+# password v1 (len=8, 100 total, 10 groups)
 .venv/bin/python3 collector.py \
   --mode free_type --prompt-profile password \
-  --raw-subdir free_type_password_v1 --part 1 --free-groups 16 \
+  --raw-subdir password/len_8 --part 1 --free-groups 10 \
   --free-gate-rate 150 --precheck-sec 5
 
-# no-space bridge strings (optional, not current priority)
-.venv/bin/python3 collector.py \
-  --mode free_type --prompt-profile continuous \
-  --raw-subdir free_type_continuous_v1 --part 1 --free-groups 16 \
-  --free-gate-rate 150 --precheck-sec 5
+# or use the helper
+./run_password_len8_part.sh 1
 
 # hard-key 补强（写入 data/raw/boost）
 .venv/bin/python3 collector.py \
@@ -129,8 +129,8 @@ python3 scan_sampling_rates.py --mode all --json-out results/rate_scan_all.json
 # 单键训练集（主数据+补强）
 python3 preprocessor.py --rounds single_key boost --session-type single_key --target-rate 190
 
-# free_type 数据
-python3 preprocessor.py --rounds free_type --session-type free_type --target-rate 190
+# password / free_type 数据
+python3 preprocessor.py --rounds password/len_8 --session-type free_type --target-rate 190
 ```
 
 > 2026-03-12 更新：预处理结果现在会写入 `session_ids/source_dirs/group_tags` 元数据。  
@@ -189,9 +189,10 @@ python3 preprocessor.py --rounds free_type --session-type free_type --target-rat
   - 已完成 `single_key + boost` 扫描与非目标会话清理
 - 🟩【已完成】Step 2: single_key 补采
   - g1-g6 高质量数据已补齐，g8 补强已完成
-- 🟨【进行中】Step 3: password-like strings 重采（慢速、固定手指、no-space）
+- 🟨【进行中】Step 3: password 数据集重采（慢速、固定手指、len=8）
+  - 协议：`a-z0-9`、长度 `8`、共 `100` 条、`10 × 10`
   - 目标：先在低重叠输入条件下跑通 password-style 攻击闭环
-  - 说明：句子型 free_type 暂不作为主 headline；`password` profile 为当前主路线
+  - 说明：句子型 free_type 暂不作为主 headline；当前优先采 `data/raw/password/len_8`
 - 🟨【进行中】Step 4: password-route 闭环评估（新数据）
   - `phase3_password_inception/run_password_closure_inception.py`
   - 指标：`char top-1/top-3/top-5`、`sequence top-10/top-50/top-100`、`CER`

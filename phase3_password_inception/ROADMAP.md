@@ -16,6 +16,12 @@ We already have:
    - reports top-k and candidate-hit metrics
 4. a collector that can now record `sentence`, `continuous`, and `password`
    prompt profiles through the same entrypoint
+5. a concrete password v1 collection protocol:
+   - charset: `a-z0-9`
+   - length: `8`
+   - total strings: `100`
+   - grouping: `10 × 10`
+   - raw path: `data/raw/password/len_8`
 
 What we do **not** have yet:
 
@@ -34,9 +40,9 @@ Main reasons:
 1. the current password route still uses a simplified training recipe compared to
    the strongest recorded Phase 2 `InceptionTime`
 2. the model is trained on `single_key + boost` and tested zero-shot on
-   continuous password-like strings
-3. some reference characters in free_type may be absent from the current
-   classifier vocabulary
+   continuous password strings
+3. the current evaluation should be moved from reused no-space free_type strings
+   to the dedicated password dataset
 4. exact top-1 whole-string match is too harsh to be the only security metric
 
 ## Planned Experiment Tracks
@@ -46,7 +52,7 @@ Main reasons:
 Goal:
 
 - train on `single_key + boost`
-- test directly on no-space free_type strings
+- test directly on held-out password strings
 
 Why:
 
@@ -99,8 +105,8 @@ Status:
 Goal:
 
 - keep `single_key + boost` as the main baseline training set
-- use part of no-space free_type for adaptation / fine-tuning
-- reserve held-out free_type parts for final evaluation
+- use part of the password dataset for adaptation / fine-tuning
+- reserve held-out password strings for final evaluation
 
 Why:
 
@@ -111,8 +117,8 @@ Why:
 Suggested split style:
 
 1. `single_key + boost` -> base training
-2. `free_type parts A` -> adaptation
-3. `free_type parts B` -> held-out evaluation
+2. `password strings 1-80` -> adaptation
+3. `password strings 81-100` -> held-out evaluation
 
 Status:
 
@@ -139,11 +145,11 @@ Status:
 - not implemented yet
 - high value
 
-### Track E: Pure Free-Type Model
+### Track E: Pure Password / Free-Type Model
 
 Goal:
 
-- train and test directly on free_type only
+- train and test directly on password/free_type only
 
 Why:
 
@@ -209,7 +215,7 @@ If we continue this route, the most sensible order is:
 
 1. keep Track A as the zero-shot baseline
 2. implement Track B so the backbone training is not artificially weak
-3. rerun password-route evaluation
+3. rerun password-route evaluation on `data/raw/password/len_8`
 4. if still needed, add Track C adaptation
 5. add Track D onset detection
 6. only then decide whether Track E is worth doing
@@ -231,5 +237,5 @@ The current best story is:
 1. Apple internal IMU is exposed on macOS
 2. that path is accessible from a non-root process
 3. `single_key + boost` gives a strong isolated-key baseline
-4. password-like no-space strings are the main attack target
+4. held-out password strings (`a-z0-9`, len=8) are the main attack target
 5. onset detection is the next major technical step toward a more automatic attack

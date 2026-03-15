@@ -44,13 +44,13 @@ Purpose:
 - optional bridge route between isolated keys and password-like strings
 - currently lower priority than the direct password route
 
-### Route D: `single_key + password-like strings`
+### Route D: `single_key + password`
 
 Training:
 - baseline from `single_key + boost`
 
 Testing:
-- held-out password-like no-space strings
+- held-out password strings
 
 Purpose:
 - cleanest attack story for continuous string / password recovery
@@ -75,7 +75,7 @@ Risk:
 Recommended order:
 
 1. `single_key + boost` as the main baseline
-2. password-like held-out test set
+2. password held-out test set
 3. optional password-style adaptation
 4. sentence-style free_type kept as archived/secondary evidence
 5. pure free_type only as an auxiliary comparison
@@ -91,7 +91,8 @@ The collector now supports three guided text profiles under `--mode free_type`:
    - the same prompts with spaces removed
    - optional bridge profile, not the current main priority
 3. `password`
-   - fixed lowercase+digit password-like strings
+   - fixed lowercase+digit password strings
+   - current v1 protocol: length 8, 100 strings, 10 groups
 
 This keeps collection inside one collector entrypoint instead of branching into
 multiple separate scripts.
@@ -120,15 +121,21 @@ multiple separate scripts.
   --free-gate-rate 150 --precheck-sec 5
 ```
 
-### Password-like strings
+### Password strings (`len=8`, `a-z0-9`, `100` total)
 
 ```bash
 .venv/bin/python3 collector.py \
   --mode free_type \
   --prompt-profile password \
-  --raw-subdir free_type_password_v1 \
-  --part 1 --free-groups 16 \
+  --raw-subdir password/len_8 \
+  --part 1 --free-groups 10 \
   --free-gate-rate 150 --precheck-sec 5
+```
+
+Helper:
+
+```bash
+./run_password_len8_part.sh 1
 ```
 
 ## 5. Recommended Testing Logic
