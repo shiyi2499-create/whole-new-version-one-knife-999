@@ -13,7 +13,7 @@ PARTICIPANT="${4:-p01}"
 
 FREE_GROUPS=16
 if [[ "$PROFILE" == "password" ]]; then
-  FREE_GROUPS=10
+  FREE_GROUPS=20
 fi
 
 cd "$(dirname "$0")"
