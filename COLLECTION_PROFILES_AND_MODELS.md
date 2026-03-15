@@ -92,7 +92,8 @@ The collector now supports three guided text profiles under `--mode free_type`:
    - optional bridge profile, not the current main priority
 3. `password`
    - fixed lowercase+digit password strings
-   - current v1 protocol: length 8, 100 strings, 10 groups
+   - current protocol: length 8, 200 strings, 20 groups
+   - the first 100 strings (`part 1-10`) were used for the initial zero-shot and adaptation result
 
 This keeps collection inside one collector entrypoint instead of branching into
 multiple separate scripts.
@@ -121,21 +122,21 @@ multiple separate scripts.
   --free-gate-rate 150 --precheck-sec 5
 ```
 
-### Password strings (`len=8`, `a-z0-9`, `100` total)
+### Password strings (`len=8`, `a-z0-9`, `200` total)
 
 ```bash
 .venv/bin/python3 collector.py \
   --mode free_type \
   --prompt-profile password \
   --raw-subdir password/len_8 \
-  --part 1 --free-groups 10 \
+  --part 11 --free-groups 20 \
   --free-gate-rate 150 --precheck-sec 5
 ```
 
 Helper:
 
 ```bash
-./run_password_len8_part.sh 1
+./run_password_len8_part.sh 11
 ```
 
 ## 5. Recommended Testing Logic

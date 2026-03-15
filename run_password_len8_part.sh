@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 <part:1-10> [participant]"
+  echo "Usage: $0 <part:1-20> [participant]"
   exit 1
 fi
 

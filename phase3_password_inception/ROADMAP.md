@@ -19,9 +19,10 @@ We already have:
 5. a concrete password v1 collection protocol:
    - charset: `a-z0-9`
    - length: `8`
-   - total strings: `100`
-   - grouping: `10 × 10`
+   - current pool size: `200`
+   - grouping: `20 × 10`
    - raw path: `data/raw/password/len_8`
+   - the first reported result uses `part 1-10`
 
 What we do **not** have yet:
 

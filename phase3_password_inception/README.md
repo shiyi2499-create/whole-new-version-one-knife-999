@@ -73,9 +73,13 @@ Current v1 password collection protocol:
 
 - charset: `a-z0-9`
 - length: `8`
-- total strings: `100`
-- grouping: `10 × 10`
+- current total pool size: `200`
+- grouping: `20 × 10`
 - raw path: `data/raw/password/len_8`
+
+The first reported zero-shot and adaptation result uses the first `100`
+strings only (`part 1-10`). Current collection continues from `part 11`
+onward in the same directory.
 
 Defaults assume the current main workspace layout:
 

@@ -1,19 +1,20 @@
 # Password `len_8` Results
 
 This file records the first complete `password`-route result on the dedicated
-`len_8` dataset.
+`len_8` dataset, using the first `100` strings in the current pool.
 
 ## Dataset
 
 - path: `data/raw/password/len_8`
 - charset: `a-z0-9`
 - length: `8`
-- total strings: `100`
-- grouping: `10 x 10`
+- current total pool size: `200`
+- current grouping: `20 x 10`
+- result subset used here: `part 1-10`
 
 ## Collection quality
 
-- all `10` parts were collected successfully
+- the first `10` parts were collected successfully
 - effective sampling rate remains near `200 Hz`
 - successful prompts match the generated password profile
 - the dataset is suitable for downstream password-route experiments

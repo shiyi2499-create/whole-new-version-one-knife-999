@@ -58,12 +58,12 @@ The current password dataset is now fully collected:
 - path: `data/raw/password/len_8`
 - charset: `a-z0-9`
 - length: `8`
-- total strings: `100`
-- grouping: `10 x 10`
+- current total pool size: `200`
+- grouping: `20 x 10`
 
 Collection quality summary:
 
-- all `10` parts completed
+- the first `10` parts completed
 - effective sampling rate stays near `200 Hz`
 - successful prompts align with the generated password list
 - retries are logged in `prompts.csv`, but the successful (`YES`) rows are
@@ -108,6 +108,7 @@ Interpretation:
 - the main issue is domain shift from isolated-key training to continuous
   password input
 - limited password-style adaptation can substantially recover performance
+- collection is now continuing from `part 11` onward in the same `len_8` pool
 
 ## Immediate next step
 

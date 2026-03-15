@@ -31,7 +31,8 @@
 - 目前 `single_key + boost` 频率扫描为目标域内（无 non-target 会话，按当前容差）。
 - `sentence` 型 free_type 数据保留，但暂时不作为当前主攻路线。
 - 当前 Phase 3 主线改为：`single_key + boost` baseline -> `password` 数据集测试。
-- `password` v1 协议：`a-z0-9`，长度固定 `8`，共 `100` 条，按 `10 × 10` 采集。
+- `password` 当前协议：`a-z0-9`，长度固定 `8`，总池 `200` 条，按 `20 × 10` 采集。
+- 当前已完成首批 `100` 条（`part 1-10`），现从 `part 11` 继续追加。
 - `continuous` profile 保留为兼容/桥接层，但不是当前主线。
 
 ## 3. 代码入口与职责
@@ -63,7 +64,7 @@
   - free_type 数据
 - `data/raw/password/len_8/`
   - 当前主线 password 数据目录
-  - 协议：`a-z0-9`、长度 `8`、共 `100` 条、`10 × 10`
+  - 协议：`a-z0-9`、长度 `8`、总池 `200` 条、`20 × 10`
 - `data/raw/free_type_sentence_* / free_type_continuous_* / free_type_password_*`
   - 旧版或过渡型 free_type 路径，保留但不作为当前主测试集
 - `data/raw/legacy_round4_ro/`
@@ -96,10 +97,10 @@
   --mode free_type --raw-subdir free_type --part 1 --free-groups 16 \
   --free-gate-rate 150 --precheck-sec 5
 
-# password v1 (len=8, 100 total, 10 groups)
+# password len=8 (200 total, 20 groups; continue from part 11 for round 2)
 .venv/bin/python3 collector.py \
   --mode free_type --prompt-profile password \
-  --raw-subdir password/len_8 --part 1 --free-groups 10 \
+  --raw-subdir password/len_8 --part 11 --free-groups 20 \
   --free-gate-rate 150 --precheck-sec 5
 
 # or use the helper
@@ -189,10 +190,10 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
   - 已完成 `single_key + boost` 扫描与非目标会话清理
 - 🟩【已完成】Step 2: single_key 补采
   - g1-g6 高质量数据已补齐，g8 补强已完成
-- 🟩【已完成】Step 3: password 数据集采集（慢速、固定手指、len=8）
-  - 协议：`a-z0-9`、长度 `8`、共 `100` 条、`10 × 10`
+- 🟨【进行中】Step 3: password 数据集采集（慢速、固定手指、len=8）
+  - 协议：`a-z0-9`、长度 `8`、总池 `200` 条、`20 × 10`
   - 目录：`data/raw/password/len_8`
-  - 质量：全 `10` 组已完成，采样率稳定在 `~200Hz`
+  - 当前进度：首批 `10` 组已完成，采样率稳定在 `~200Hz`；现从 `part 11` 继续追加
 - 🟨【进行中】Step 4: password-route 闭环评估与 adaptation
   - `phase3_password_inception/run_password_closure_inception.py`
   - `adapt_password_len8_inception.py`

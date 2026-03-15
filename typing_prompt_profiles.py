@@ -4,7 +4,7 @@ Prompt profiles for guided text collection.
 Profiles:
 - sentence: existing natural-language free_type prompts with spaces
 - continuous: the same prompts with spaces removed, useful as a no-space bridge
-- password: fixed password-like lowercase+digit strings (len=8, 100 prompts)
+- password: fixed password-like lowercase+digit strings (len=8, 200 prompts)
 """
 
 from __future__ import annotations
@@ -22,12 +22,12 @@ def _normalize_continuous(prompt: str) -> str:
     return prompt.replace(" ", "")
 
 
-def _build_password_prompts() -> list[str]:
+def _build_password_prompts(total: int = 200) -> list[str]:
     rng = random.Random(20260316)
     alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
     prompts = []
     seen = set()
-    while len(prompts) < 100:
+    while len(prompts) < total:
         s = "".join(rng.choice(alphabet) for _ in range(8))
         # Keep the password-like strings realistic enough: at least one letter
         # and one digit, all lowercase, no separators.
@@ -65,9 +65,9 @@ PROMPT_PROFILES = {
     },
     "password": {
         "name": "Password",
-        "description": "Password-like lowercase+digit strings (len=8, 100 total, 10 groups).",
+        "description": "Password-like lowercase+digit strings (len=8, 200 total, 20 groups).",
         "prompts": PASSWORD_PROMPTS,
-        "default_groups": 10,
+        "default_groups": 20,
         "unit_name": "password",
         "unit_name_plural": "passwords",
         "password_length": 8,
@@ -80,8 +80,8 @@ def validate_profiles() -> None:
         prompts = info["prompts"]
         expected = info.get("default_groups")
         if key == "password":
-            if len(prompts) != 100:
-                raise ValueError(f"{key} prompt count must be 100, got {len(prompts)}")
+            if len(prompts) != 200:
+                raise ValueError(f"{key} prompt count must be 200, got {len(prompts)}")
         else:
             expected_total = PROMPTS_PER_PART * TOTAL_PARTS
             if len(prompts) != expected_total:
