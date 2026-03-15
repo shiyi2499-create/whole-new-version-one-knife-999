@@ -4,8 +4,8 @@ Password len=8 adaptation experiment.
 
 Protocol:
 - baseline training source: single_key + boost merged dataset
-- password adaptation source: password parts 1-8 (80 strings)
-- password held-out test source: password parts 9-10 (20 strings)
+- password adaptation source: password parts 1-16 (160 strings) by default
+- password held-out test source: password parts 17-20 (40 strings) by default
 
 Outputs:
 - zero-shot metrics on held-out password test split
@@ -90,6 +90,35 @@ def split_sequences_by_parts(sequences: list[dict], adapt_parts: set[int], test_
         elif part in test_parts:
             test.append(seq)
     return adapt, test
+
+
+def session_is_complete(session_prefix: str) -> bool:
+    required = [
+        f"{session_prefix}_sensor.csv",
+        f"{session_prefix}_events.csv",
+        f"{session_prefix}_prompts.csv",
+    ]
+    return all(os.path.exists(path) for path in required)
+
+
+def select_latest_complete_sessions(sessions: list[str]) -> list[str]:
+    by_part: dict[int, list[str]] = {}
+    for sess in sessions:
+        try:
+            part = parse_part(sess)
+        except ValueError:
+            continue
+        by_part.setdefault(part, []).append(sess)
+
+    selected = []
+    for part in sorted(by_part):
+        candidates = sorted(by_part[part])
+        complete = [sess for sess in candidates if session_is_complete(sess)]
+        if complete:
+            selected.append(complete[-1])
+        else:
+            selected.append(candidates[-1])
+    return selected
 
 
 def flatten_items(sequences: list[dict], class_to_idx: dict[str, int]):
@@ -228,6 +257,8 @@ def parse_args():
     p.add_argument("--head-lr", type=float, default=5e-4)
     p.add_argument("--full-lr", type=float, default=2e-4)
     p.add_argument("--adapt-batch-size", type=int, default=32)
+    p.add_argument("--adapt-part-end", type=int, default=16, help="Use parts 1..N for password adaptation")
+    p.add_argument("--test-part-start", type=int, default=17, help="Use parts N..end for held-out password test")
     return p.parse_args()
 
 
@@ -264,7 +295,8 @@ def main():
     sessions = discover_freetype_sessions([args.password_dir])
     if not sessions:
         raise RuntimeError("No password sessions found.")
-    print(f"Found {len(sessions)} password sessions")
+    sessions = select_latest_complete_sessions(sessions)
+    print(f"Found {len(sessions)} selected password sessions")
 
     sequences = []
     for sess in sessions:
@@ -273,8 +305,8 @@ def main():
         print(f"  part {part}: {len(seqs)} sequences")
         sequences.extend(seqs)
 
-    adapt_parts = set(range(1, 9))
-    test_parts = {9, 10}
+    adapt_parts = set(range(1, args.adapt_part_end + 1))
+    test_parts = set(range(args.test_part_start, max(parse_part(s) for s in sessions) + 1))
     adapt_sequences, test_sequences = split_sequences_by_parts(sequences, adapt_parts, test_parts)
     print(f"Adapt sequences: {len(adapt_sequences)} | Test sequences: {len(test_sequences)}")
 

@@ -54,6 +54,10 @@
   - free_type 微调 + beam 解码评估
 - `scan_sampling_rates.py`
   - 会话采样率扫描与异常会话定位
+- `multisplit_password_len8_inception.py`
+  - `len_8` password route 的随机 `16/4` group split 稳定性脚本
+- `password_only_len8_inception.py`
+  - 纯 `password` 训练/测试的 Inception 对照脚本
 
 ### 当前数据目录约定
 - `data/raw/single_key/`
@@ -65,6 +69,8 @@
 - `data/raw/password/len_8/`
   - 当前主线 password 数据目录
   - 协议：`a-z0-9`、长度 `8`、总池 `200` 条、`20 × 10`
+- [CODE_MAP.md](/Users/shiyi/备份（mac_vs专用）/CODE_MAP.md)
+  - 当前代码梳理入口：主线/辅助/历史脚本一览
 - `data/raw/free_type_sentence_* / free_type_continuous_* / free_type_password_*`
   - 旧版或过渡型 free_type 路径，保留但不作为当前主测试集
 - `data/raw/legacy_round4_ro/`
