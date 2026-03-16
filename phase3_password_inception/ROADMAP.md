@@ -26,10 +26,10 @@ We already have:
 
 What we do **not** have yet:
 
-1. a final multi-length password story (`len_8`, `len_10`, `len_12`)
-2. symbol-inclusive password evaluation
+1. a final multi-length password story (`len_8`, `len_9`, `len_10`)
+2. symbol-inclusive password evaluation (`! ? @` first)
 3. a continuous-stream keystroke onset detector
-4. a final clean ablation table beyond the current `len_8` results
+4. cross-device / cross-user evidence
 
 ## Immediate Diagnostic Rule
 
@@ -44,8 +44,8 @@ Reason:
 
 ## Why The Current Low Result Is Not Final
 
-The current password-style result should be treated as an early prototype result,
-not the final attack capability.
+The current password-style result is now a usable paper-grade controlled result,
+but not the final attack capability.
 
 Main reasons:
 
@@ -53,9 +53,8 @@ Main reasons:
    the strongest recorded Phase 2 `InceptionTime`
 2. the model is trained on `single_key + boost` and tested zero-shot on
    continuous password strings
-3. the current evaluation should be moved from reused no-space free_type strings
-   to the dedicated password dataset
-4. exact top-1 whole-string match is too harsh to be the only security metric
+3. exact top-1 whole-string match is too harsh to be the only security metric
+4. we still need longer lengths, symbols, and continuous-stream onset detection
 
 ## Planned Experiment Tracks
 
@@ -245,11 +244,12 @@ Why:
 If we continue this route, the most sensible order is:
 
 1. keep Track A as the zero-shot baseline
-2. implement Track B so the backbone training is not artificially weak
-3. rerun password-route evaluation on `data/raw/password/len_8`
-4. if still needed, add Track C adaptation
+2. keep Track C as the main positive route
+3. extend from `len_8` to `len_9 / len_10`
+4. add first symbol classes (`! ? @`)
 5. add Track D onset detection
-6. only then decide whether Track E is worth doing
+6. expand to cross-device / cross-user collection
+7. only then revisit broader model comparisons
 
 ## Current Practical Interpretation
 

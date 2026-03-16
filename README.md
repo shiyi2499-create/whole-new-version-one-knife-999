@@ -32,7 +32,7 @@
 - `sentence` 型 free_type 数据保留，但暂时不作为当前主攻路线。
 - 当前 Phase 3 主线改为：`single_key + boost` baseline -> `password` 数据集测试。
 - `password` 当前协议：`a-z0-9`，长度固定 `8`，总池 `200` 条，按 `20 × 10` 采集。
-- 当前已完成首批 `100` 条（`part 1-10`），现从 `part 11` 继续追加。
+- 当前 `len=8` 的 `200` 条 password 数据已完成采集，并已完成 zero-shot / adaptation / multisplit / password-only 对照。
 - `continuous` profile 保留为兼容/桥接层，但不是当前主线。
 
 ## 3. 代码入口与职责
@@ -190,102 +190,71 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 - `--xgb-jobs`：XGBoost/RandomForest 并行度
 - `--nondeterministic`：追求速度时关闭严格确定性
 
-## 6. 计划状态看板（鲜艳标记）
+## 6. 当前状态看板
 
 - 🟩【已完成】Step 1: 频率清洗与重采清单
   - 已完成 `single_key + boost` 扫描与非目标会话清理
 - 🟩【已完成】Step 2: single_key 补采
   - g1-g6 高质量数据已补齐，g8 补强已完成
-- 🟨【进行中】Step 3: password 数据集采集（慢速、固定手指、len=8）
+- 🟩【已完成】Step 3: `len=8` password 数据集采集
   - 协议：`a-z0-9`、长度 `8`、总池 `200` 条、`20 × 10`
   - 目录：`data/raw/password/len_8`
-  - 当前进度：首批 `10` 组已完成，采样率稳定在 `~200Hz`；现从 `part 11` 继续追加
-- 🟨【进行中】Step 4: password-route 闭环评估与 adaptation
+  - 当前状态：`part 1-20` 已完成，采样率稳定在 `~200Hz`
+- 🟩【已完成】Step 4: `len=8` password-route 闭环评估与对照
   - `phase3_password_inception/run_password_closure_inception.py`
   - `adapt_password_len8_inception.py`
+  - `multisplit_password_len8_inception.py`
+  - `password_only_len8_inception.py`
   - 当前结论：
     - zero-shot 很弱，说明 `single_key -> password` 域偏移明显
-    - adaptation 后显著提升：
-      - `char_top1 = 62.5%`
-      - `char_top3 = 87.5%`
-      - `char_top5 = 96.2%`
-      - `sequence_top100 = 35.0%`
-      - `CER = 37.5%`
+    - `single_key + password adaptation` 是当前最强路线
+    - `password only` 可行，但更弱、波动更大
+  - 当前最好看的稳定结果（`5` 次随机 `16/4` split 均值）：
+    - `char_top1 = 67.3% ± 1.0%`
+    - `char_top3 = 91.7% ± 1.2%`
+    - `char_top5 = 96.8% ± 0.6%`
+    - `sequence_top100 = 46.5% ± 5.1%`
+    - `CER = 32.7% ± 1.0%`
+  - 固定 `160/40` split 最佳单次结果：
+    - `char_top1 = 73.4%`
+    - `char_top3 = 97.8%`
+    - `char_top5 = 99.1%`
+    - `sequence_top100 = 65.0%`
+    - `CER = 26.6%`
   - 指标：`char top-1/top-3/top-5`、`sequence top-10/top-50/top-100`、`CER`
 - 🟥【待办】Step 5: continuous stream 中的 keystroke onset detection
   - 目标：在连续 IMU 流中自动判断“何时发生按键”
   - 作用：补齐从“持续监听传感器”到“自动切窗”的攻击链关键一环
-- 🟥【未开始】Step 6: 论文级整理
-  - 指标表、消融、威胁模型边界、可复现实验脚本
+- 🟥【待办】Step 6: `len=9 / len=10` password 扩展
+  - 目标：验证长度增长后 top-k / top-N 的退化曲线
+- 🟥【待办】Step 7: 符号与大写扩展
+  - 第一批目标：`! ? @`
+  - 需要明确是按“最终字符”还是“物理组合键”建模
+- 🟥【待办】Step 8: cross-device / cross-user 扩展
+  - 先补更多人和更多设备
+  - 再讨论跨设备迁移与泛化
+- 🟥【待办】Step 9: 论文级整理
+  - 指标表、消融、威胁模型边界、可复现实验脚本、demo 描述
 
 > 注：`phase3_decoder.py` 当前仍偏向旧的 sentence/word 解码口径，
 > 不能直接当作当前 password 主线的 headline。
 
-## 7. 开放技术问题：能否强制跑到最高频档？
-
-当前结论：尚未证明可直接“软件强制”固定在最高频档（~199Hz）。
-
-### 调查方向（保留）
-- 对比不同运行条件下的频率分布：
-  - 是否插电/电池
-  - 系统负载水平
-  - 传感器初始化顺序
-  - 采集前静置时长
-- 在 `sensor_reader.py` / `macimu` 侧确认：
-  - 是否存在可配置 ODR（output data rate）接口
-  - 是否可通过 IOKit/HID 参数切换采样档
-
-## 8. 注意事项
+## 7. 当前主结论
 
 - 预检失败会自动删除该次会话文件，这是预期行为
 - 当前主线按“单一高频域”训练，不引入频率档特征
-- password-like 慢速输入属于明确受控条件，后续论文中需显式声明实验边界
-- 自动 onset detection 仍是当前主线中的待补环节
+- 当前最支持的攻击路线是：
+  - `single_key + boost`
+  - 再加 `password-style adaptation`
+- `password only` 不差，但当前没有超过上面这条路线
+- `sentence` / 自然语言恢复保留，但暂不作为当前 headline
+- 当前结果已经足以支撑一个受控 password-style continuous-string 攻击故事
+- 自动 onset detection、更多长度、更多设备/更多用户，是下一阶段最值钱的扩展
 
-## 9. 明天 free_type 采集与训练执行清单
+## 8. 下一阶段待做
 
-建议新数据放到独立目录（不污染旧数据）：
-
-```bash
-# 1) 逐组采集（一次一组，16 组总量，慢速打字）
-sudo .venv/bin/python3 collector.py \
-  --mode free_type \
-  --raw-subdir free_type_slow_v2 \
-  --part 1 --free-groups 16 \
-  --free-gate-rate 150 --precheck-sec 5
-
-# part 改为 2..16 继续采
-```
-
-采完后先跑 closure 质检：
-
-```bash
-.venv/bin/python3 run_freetype_closure_eval.py \
-  --device auto \
-  --rounds free_type_slow_v2 \
-  --yes-only \
-  --dataset-yes-only \
-  --drop-iki-overlap \
-  --iki-overlap-ms 200 \
-  --max-imputed-ratio 0.03
-```
-
-再跑微调 + beam：
-
-```bash
-.venv/bin/python3 run_freetype_finetune_beam.py \
-  --device auto \
-  --rounds free_type_slow_v2 \
-  --split-by session \
-  --dataset-yes-only \
-  --eval-yes-only \
-  --drop-iki-overlap \
-  --iki-overlap-ms 200 \
-  --max-imputed-ratio 0.03 \
-  --stage1-epochs 4 \
-  --stage2-epochs 12 \
-  --stage1-lr 3e-4 \
-  --stage2-lr 1e-4 \
-  --balanced-sampling \
-  --beam 100 --alpha 0.15
-```
+1. `len=9 / len=10` password 扩展
+2. `! ? @` 等常见符号扩展
+3. continuous stream `onset detection`
+4. cross-device / cross-user 采集
+5. 持续监听 demo：长时监控 -> 自动找按键时间 -> 预测该时间段密码字符

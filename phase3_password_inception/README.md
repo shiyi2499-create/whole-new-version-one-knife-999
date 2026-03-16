@@ -77,9 +77,14 @@ Current v1 password collection protocol:
 - grouping: `20 × 10`
 - raw path: `data/raw/password/len_8`
 
-The first reported zero-shot and adaptation result uses the first `100`
-strings only (`part 1-10`). Current collection continues from `part 11`
-onward in the same directory.
+Current reported results now cover both:
+
+- the initial `100`-string subset (`part 1-10`)
+- the full `200`-string pool (`part 1-20`)
+
+The current reference result should be read from:
+
+- [RESULTS_LEN8.md](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/RESULTS_LEN8.md)
 
 Defaults assume the current main workspace layout:
 
@@ -99,7 +104,7 @@ In other words, this route does **not** train the baseline on free_type first.
 It trains on isolated-key data, then checks whether that baseline can recover
 continuous strings.
 
-## Typical server run
+## Typical runs
 
 ```bash
 python phase3_password_inception/run_password_closure_inception.py \
@@ -110,6 +115,41 @@ python phase3_password_inception/run_password_closure_inception.py \
   --scaler-path results/inception_password_scaler.npz \
   --report-path results/password_closure_inception.json \
   --force-train
+```
+
+```bash
+# fixed 160/40 adaptation split
+python adapt_password_len8_inception.py \
+  --device cuda \
+  --merged-path data/processed/merged_dataset.npz \
+  --password-dir data/raw/password/len_8 \
+  --checkpoint-path results/inception_password_final.pt \
+  --scaler-path results/inception_password_scaler.npz \
+  --report-path results/password_len8_adaptation_200.json
+```
+
+```bash
+# random 16/4 multisplit adaptation
+python multisplit_password_len8_inception.py \
+  --device cuda \
+  --merged-path data/processed/merged_dataset.npz \
+  --password-dir data/raw/password/len_8 \
+  --checkpoint-path results/inception_password_final.pt \
+  --scaler-path results/inception_password_scaler.npz \
+  --report-path results/password_len8_multisplit.json \
+  --num-splits 5 \
+  --train-parts 16
+```
+
+```bash
+# random 16/4 password-only comparison
+python password_only_len8_inception.py \
+  --device cuda \
+  --password-dir data/raw/password/len_8 \
+  --report-path results/password_only_len8_multisplit.json \
+  --checkpoint-dir results/password_only_len8 \
+  --num-splits 5 \
+  --train-parts 16
 ```
 
 ## Local smoke test status
@@ -163,3 +203,17 @@ Interpretation:
 - if this diagnostic is also weak, the trainer/recipe is underperforming
 - if this diagnostic is strong but password zero-shot is weak, the main issue is
   domain shift from isolated keys to continuous password input
+
+## Current interpretation
+
+The current `len=8` route supports the following reading:
+
+1. `single_key + boost` is a strong isolated-key baseline
+2. direct zero-shot transfer to continuous password input is weak
+3. `single_key + password adaptation` is currently the strongest route
+4. `password only` is viable, but weaker and less stable
+5. next high-value tasks are:
+   - `len=9 / len=10`
+   - symbol-inclusive passwords (`! ? @`)
+   - continuous-stream onset detection
+   - cross-device / cross-user expansion
