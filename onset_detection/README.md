@@ -1,28 +1,26 @@
-# Onset Detection Claude Pack
+# Onset Detection Briefing Pack
 
-This folder is a curated snapshot from the main workspace for designing and implementing
-continuous-stream keyboard onset detection.
+这个文件夹是给外部模型快速理解当前项目状态用的轻量说明包。
 
-## What Claude should read first
+目标不是复现实验，而是让对方先理解：
+- 我们已经完成了什么
+- 当前主线是什么
+- password 路线的核心结果是什么
+- onset detection 为什么是下一步
 
-1. `workspace/README.md`
-2. `workspace/CODE_MAP.md`
-3. `ONSET_DETECTION_BRIEF.md`
-4. `CLAUDE_PROMPT.md`
+## 建议阅读顺序
 
-## Why this pack exists
+1. `ROOT_README.md`
+2. `PHASE3_STATUS.md`
+3. `RESULTS_LEN8.md`
+4. `PERMISSION_MODEL.md`
+5. `PAPER_OUTLINE.md`
 
-The main workspace contains a lot of historical code and data. This folder keeps the code,
-README files, and design notes Claude needs for the next task:
+## 当前一句话总结
 
-- detect when keyboard keystrokes happen in a continuous IMU stream
-- distinguish keyboard onset from common nuisance motion
-- preserve compatibility with the current non-root SPU collection route
-- later hand candidate windows to the existing password/key classifier
-
-## Important current context
-
-- Current main workspace: `workspace/`
-- Current IMU access path: direct non-root `AppleSPUHIDDevice`
-- Current strongest route: `single_key + boost` baseline + `password` adaptation
-- Current next big missing piece: onset detection / continuous-stream segmentation
+我们已经证明：
+- Apple internal IMU / SPU 在 macOS 上存在 non-root 可读路径
+- `single_key + boost` 是强 baseline
+- `password-style continuous-string` 路线已经闭环
+- 当前最强结果来自 `single_key + password adaptation`
+- 下一阶段的关键问题是 continuous-stream onset detection
