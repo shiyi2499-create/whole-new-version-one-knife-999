@@ -1,0 +1,15 @@
+# Keystroke Vibration Data Collector - Dependencies
+# Install: pip install -r requirements.txt
+
+# Apple Silicon IMU access (accelerometer + gyroscope via IOKit HID)
+# Primary backend: spu_backend.py (direct IOKit ctypes, no extra deps, non-root)
+# Legacy fallback: macimu (uncomment below if you need the root-based path)
+# macimu
+
+# Keyboard event listener (cross-platform)
+pynput
+
+# Numerical processing (for preprocessor)
+numpy
+scipy
+tqdm
