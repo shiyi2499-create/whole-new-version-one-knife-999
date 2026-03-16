@@ -257,20 +257,24 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 2. `! ? @` 等常见符号扩展
 3. continuous stream `onset detection`
 4. cross-device / cross-user 采集
-5. 持续监听 demo：长时监控 -> 自动找按键时间 -> 预测该时间段密码字符
+5. `2` 分钟混合流 demo：自动识别键盘活动开始/结束，并在 password 段恢复输入内容
 
 ## 9. Onset Detection 设计思路
 
 当前 password 路线默认依赖已有键盘标签来切窗；真正的自动攻击链还需要补上：
 
 - 在连续 IMU 数据流里，自动判断“什么时候发生了一次键盘敲击”
-- 再把这些候选片段送给现有 password/key classifier
+- 进一步判断“一段键盘活动何时开始、何时结束”
+- 再把 password 风格那一段候选片段送给现有 password/key classifier
 
-当前建议把 onset detection 单独拆成一个二分类 / proposal 任务：
+当前建议把 onset detection 单独拆成两个相邻层次：
 
 1. `keyboard onset`
    - 目标：检测键盘敲击事件发生时刻
-2. `non-keyboard motion`
+2. `keyboard episode boundary`
+   - 目标：判断一段键盘活动何时开始、何时结束
+   - MVP 可先用“检测到第一个稳定 onset 视为开始；长时间无新 onset 视为结束”的启发式实现
+3. `non-keyboard motion`
    - 目标：过滤常见干扰，如：
      - 静止不动
      - 滑动触控板
@@ -291,22 +295,36 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
     - `shake`
     - `desk_bump` / `lift_and_put_down`
 
-### 连续流评估建议
+### 当前推荐的 demo 协议
 
-除了独立场景采集，还需要录“长时混合流”来模拟真实监听：
+当前不把“长时监控一小时”作为论文必需项，而是先做一个更可控、更容易写清楚的 `2` 分钟混合流验证：
 
-- 例如每段 `20s`，随机拼接：
+- 在约 `120s` 连续流里安排多个非键盘扰动时段：
   - 静止
   - 触控板滑动
   - 触控板敲击
-  - 晃动
-  - 键盘输入
-- 不建议固定顺序永远相同，最好每轮随机排列，避免模型记住时间顺序
+  - 晃动 / 桌面轻碰
+- 再安排两个键盘活动时段：
+  - `typing_1`：自由乱打字 / free typing
+  - `typing_2`：符合当前 password 协议的慢速 password-style 输入
+
+当前目标不是恢复自由文本内容，而是证明：
+
+1. 在这 `2` 分钟里，系统能分辨哪些时段不是键盘
+2. 能找出哪一段开始敲键盘、哪一段结束敲键盘
+3. 能区分：
+   - `typing_1`：自由敲击段
+   - `typing_2`：password 风格输入段
+4. 对 `typing_2` 这段，再接现有 password classifier 恢复输入内容
+
+这比“长时监控 demo”更适合作为当前论文版的可行性证明。
 
 ### 推荐指标
 
 - onset `precision / recall / F1`
 - 平均时间偏差（预测时刻和真实按键时刻的距离）
 - `false alarms per minute/hour`
+- keyboard activity start / end boundary 误差
+- 两段键盘活动区间是否被正确分离
 - 下游影响：
-  - onset proposal 后再接 password classifier 的 top-k / top-N 变化
+  - 在 `typing_2` 段上，onset proposal 后再接 password classifier 的 top-k / top-N 变化
