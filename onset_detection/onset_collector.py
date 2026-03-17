@@ -3,26 +3,25 @@ Onset Data Collector
 ====================
 Collect negative-sample and mixed-stream sessions for onset detection.
 
-Two modes:
+Three modes:
   1. negative  – Record a single activity type (idle, trackpad_move, etc.)
-                 Outputs sensor.csv only (all-negative, no keyboard labels)
-  2. mixed     – Record a scripted sequence of interleaved activities
-                 including keyboard typing segments with event labels
+  2. mixed     – Record a scripted sequence of random interleaved activities
+  3. mixed2    – Record the structured 2-minute protocol:
+                 idle → trackpad_move → typing_1 (free) → trackpad_click →
+                 shake → typing_2 (password) → desk_bump → idle
+                 with explicit segment boundaries and labels
 
 Reuses the existing sensor_reader / spu_backend / keyboard_listener stack.
 
 Run:
   python3 onset_collector.py --mode negative --activity idle --duration 60
-  python3 onset_collector.py --mode negative --activity trackpad_move --duration 60
-  python3 onset_collector.py --mode negative --activity trackpad_click --duration 60
-  python3 onset_collector.py --mode negative --activity shake --duration 45
-  python3 onset_collector.py --mode negative --activity desk_bump --duration 45
-
   python3 onset_collector.py --mode mixed --n-segments 15 --segment-sec 30
+  python3 onset_collector.py --mode mixed2 --n-trials 5
 
 Data is saved under:
   data/raw/onset_negative/<activity>/    (for negative mode)
   data/raw/onset_mixed/                  (for mixed mode)
+  data/raw/onset_mixed2/                 (for mixed2 mode)
 """
 
 from __future__ import annotations
@@ -38,14 +37,10 @@ import random
 from datetime import datetime
 from typing import Optional
 
-# Import from the main project.  The project root is resolved at runtime
-# via --project-root or best-effort detection (parent of onset_detection/).
-
 _PROJECT_ROOT = None
 
 
 def _setup_imports(project_root: str = ""):
-    """Add project root to sys.path for sensor_reader / keyboard_listener."""
     global _PROJECT_ROOT
     if project_root:
         root = os.path.abspath(project_root)
@@ -140,10 +135,9 @@ def run_negative_mode(
     print(f"  Output:    {sensor_path}")
     print(f"{'='*60}\n")
 
-    # Pre-check
     print(f"  Warming up sensor ({precheck_sec:.0f}s)...")
     time.sleep(precheck_sec)
-    sensor.drain()  # discard warm-up samples
+    sensor.drain()
 
     sf, sw = open_sensor_csv(sensor_path)
     sample_count = 0
@@ -167,7 +161,6 @@ def run_negative_mode(
     except KeyboardInterrupt:
         print("\n  Stopped early by user.")
 
-    # Final drain
     samples = sensor.drain()
     if samples:
         write_sensor_rows(sw, samples)
@@ -197,39 +190,31 @@ def run_negative_mode(
     print(f"  Meta  → {meta_path}\n")
 
 
-# ── Mixed mode ───────────────────────────────────────────────
+# ── Mixed mode (original random) ────────────────────────────
 
 def generate_mixed_script(
     n_segments: int = 15,
     segment_sec: float = 30.0,
     seed: int = 42,
 ) -> list[dict]:
-    """
-    Generate a random script of mixed-stream segments.
-    Each segment is ~segment_sec long with 4-6 activity blocks.
-    """
     rng = random.Random(seed)
-
-    # Typing prompts: random 8-char strings like the password protocol
     chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+
     def random_password():
         return "".join(rng.choices(chars, k=8))
 
     scripts = []
     for i in range(n_segments):
-        # Build a random sequence of activity blocks for this segment
         n_blocks = rng.randint(4, 6)
         blocks = []
         total = 0.0
 
         for j in range(n_blocks):
-            # Pick activity
             if j == 0:
-                activity = "idle"  # always start with idle for baseline
+                activity = "idle"
             else:
                 activity = rng.choice(ACTIVITIES)
 
-            # Duration
             if activity == "keyboard":
                 dur = rng.uniform(3.0, 5.0)
                 prompt = random_password()
@@ -298,7 +283,6 @@ def run_mixed_mode(
         sf, sw = open_sensor_csv(sensor_path)
         ef, ew = open_events_csv(events_path)
 
-        # Activity log
         alf = open(activity_log_path, "w", newline="")
         alw = csv.writer(alf)
         alw.writerow(["start_time_ns", "end_time_ns", "activity", "prompt"])
@@ -307,7 +291,6 @@ def run_mixed_mode(
         event_count = 0
         stop = threading.Event()
 
-        # Drain thread
         def drain_fn():
             nonlocal sample_count, event_count
             while not stop.is_set():
@@ -321,7 +304,7 @@ def run_mixed_mode(
         drain_t.start()
 
         input(f"  Press ENTER to start segment {idx+1} →")
-        keyboard.drain()  # clear stale events
+        keyboard.drain()
 
         for block in seg["blocks"]:
             act = block["activity"]
@@ -336,7 +319,6 @@ def run_mixed_mode(
             block_start_ns = time.perf_counter_ns()
 
             if act == "keyboard" and prompt:
-                # Collect keyboard events during typing
                 t_end = time.time() + dur
                 while time.time() < t_end:
                     events = keyboard.drain()
@@ -345,7 +327,6 @@ def run_mixed_mode(
                         event_count += len(events)
                     time.sleep(0.02)
             else:
-                # Non-keyboard activity: just wait
                 time.sleep(dur)
 
             block_end_ns = time.perf_counter_ns()
@@ -354,7 +335,6 @@ def run_mixed_mode(
         stop.set()
         drain_t.join(timeout=2.0)
 
-        # Final drain
         samples = sensor.drain()
         if samples:
             write_sensor_rows(sw, samples)
@@ -379,6 +359,275 @@ def run_mixed_mode(
     print(f"  Output → {output_dir}\n")
 
 
+# ══════════════════════════════════════════════════════════════
+# Mixed2 mode: structured 2-minute protocol
+# ══════════════════════════════════════════════════════════════
+
+# Default protocol: 8 segments, ~120s total
+# Segment labels are used as ground-truth for activity segmentation.
+# typing_1 = free typing (random text, faster)
+# typing_2 = password-style typing (8-char, slower, controlled)
+
+DEFAULT_MIXED2_PROTOCOL = [
+    {"activity": "idle",            "duration_s": 10.0, "label": "idle_1"},
+    {"activity": "trackpad_move",   "duration_s": 12.0, "label": "trackpad_move_1"},
+    {"activity": "keyboard",        "duration_s": 20.0, "label": "typing_1",
+     "typing_style": "free",
+     "prompt_instructions": "Type whatever you want – random words, sentences, etc."},
+    {"activity": "trackpad_click",  "duration_s": 10.0, "label": "trackpad_click_1"},
+    {"activity": "shake",           "duration_s":  8.0, "label": "shake_1"},
+    {"activity": "keyboard",        "duration_s": 25.0, "label": "typing_2",
+     "typing_style": "password",
+     "prompt_instructions": ""},  # filled with actual password prompts
+    {"activity": "desk_bump",       "duration_s":  8.0, "label": "desk_bump_1"},
+    {"activity": "idle",            "duration_s": 10.0, "label": "idle_2"},
+]
+
+
+def generate_mixed2_protocol(
+    n_passwords: int = 5,
+    seed: int = 42,
+) -> list[dict]:
+    """
+    Generate the structured 2-minute mixed-stream protocol.
+    The typing_2 segment gets n_passwords random 8-char password prompts.
+    """
+    rng = random.Random(seed)
+    chars = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+    protocol = []
+    for seg in DEFAULT_MIXED2_PROTOCOL:
+        entry = dict(seg)
+        if entry.get("typing_style") == "password":
+            passwords = ["".join(rng.choices(chars, k=8)) for _ in range(n_passwords)]
+            entry["prompts"] = passwords
+            entry["prompt_instructions"] = (
+                f"Type each password slowly and carefully, press Enter between each:\n"
+                + "\n".join(f"  {i+1}. {pw}" for i, pw in enumerate(passwords))
+            )
+        protocol.append(entry)
+
+    return protocol
+
+
+def run_mixed2_mode(
+    n_trials: int = 5,
+    n_passwords: int = 5,
+    output_dir: str = "data/raw/onset_mixed2",
+    participant: str = "p01",
+    seed: int = 42,
+):
+    """
+    Record the structured 2-minute mixed-stream protocol.
+
+    Each trial produces:
+      - <session_id>_sensor.csv
+      - <session_id>_events.csv
+      - <session_id>_activity_log.csv   ← ground-truth segment boundaries
+      - <session_id>_protocol.json
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    tag = timestamp_tag()
+
+    sensor = SensorReader()
+    keyboard = KeyboardListener()
+    sensor.start()
+    keyboard.start()
+
+    print(f"\n{'='*60}")
+    print(f"  STRUCTURED 2-MINUTE MIXED-STREAM COLLECTION")
+    print(f"  Trials:     {n_trials}")
+    print(f"  Passwords:  {n_passwords} per trial")
+    print(f"  Output:     {output_dir}")
+    print(f"{'='*60}\n")
+
+    print("  Warming up sensor (3s)...")
+    time.sleep(3)
+    sensor.drain()
+    keyboard.drain()
+
+    for trial_idx in range(n_trials):
+        trial_seed = seed + trial_idx
+        protocol = generate_mixed2_protocol(n_passwords=n_passwords, seed=trial_seed)
+
+        session_id = f"{participant}_mixed2_trial{trial_idx:03d}_{tag}"
+        sensor_path = os.path.join(output_dir, f"{session_id}_sensor.csv")
+        events_path = os.path.join(output_dir, f"{session_id}_events.csv")
+        activity_log_path = os.path.join(output_dir, f"{session_id}_activity_log.csv")
+        protocol_path = os.path.join(output_dir, f"{session_id}_protocol.json")
+
+        total_dur = sum(s["duration_s"] for s in protocol)
+        print(f"\n  ══ Trial {trial_idx+1}/{n_trials} ({total_dur:.0f}s) ══")
+
+        sf, sw = open_sensor_csv(sensor_path)
+        ef, ew = open_events_csv(events_path)
+
+        # Activity log with explicit segment boundaries
+        alf = open(activity_log_path, "w", newline="")
+        alw = csv.writer(alf)
+        alw.writerow([
+            "start_time_ns", "end_time_ns", "activity",
+            "label", "typing_style", "prompts",
+        ])
+
+        sample_count = 0
+        event_count = 0
+        stop = threading.Event()
+
+        def drain_fn():
+            nonlocal sample_count
+            while not stop.is_set():
+                samples = sensor.drain()
+                if samples:
+                    write_sensor_rows(sw, samples)
+                    sample_count += len(samples)
+                time.sleep(0.05)
+
+        drain_t = threading.Thread(target=drain_fn, daemon=True)
+        drain_t.start()
+
+        input(f"  Press ENTER to start trial {trial_idx+1} →")
+        keyboard.drain()
+
+        for seg_idx, seg in enumerate(protocol):
+            act = seg["activity"]
+            dur = seg["duration_s"]
+            label = seg["label"]
+            typing_style = seg.get("typing_style", "")
+
+            if act == "keyboard":
+                prompt_text = seg.get("prompt_instructions", "")
+                print(f"    🔵 [{label}] ({dur:.0f}s) {typing_style}")
+                if prompt_text:
+                    for line in prompt_text.split("\n"):
+                        print(f"       {line}")
+            else:
+                print(f"    🟡 [{label}] ({dur:.0f}s)")
+
+            block_start_ns = time.perf_counter_ns()
+
+            if act == "keyboard":
+                t_end = time.time() + dur
+                while time.time() < t_end:
+                    events = keyboard.drain()
+                    if events:
+                        write_event_rows(ew, events, participant, session_id)
+                        event_count += len(events)
+                    elapsed = time.time() - (t_end - dur)
+                    remaining = max(0, dur - elapsed)
+                    print(f"\r      [{elapsed:.0f}s / {dur:.0f}s] keys={event_count}  ",
+                          end="", flush=True)
+                    time.sleep(0.02)
+                print()  # newline after progress
+            else:
+                t_end = time.time() + dur
+                while time.time() < t_end:
+                    elapsed = time.time() - (t_end - dur)
+                    remaining = max(0, dur - elapsed)
+                    print(f"\r      [{elapsed:.0f}s / {dur:.0f}s]  ",
+                          end="", flush=True)
+                    time.sleep(0.2)
+                print()
+
+            block_end_ns = time.perf_counter_ns()
+
+            # Write activity log row
+            prompts_str = json.dumps(seg.get("prompts", []))
+            alw.writerow([
+                block_start_ns, block_end_ns, act,
+                label, typing_style, prompts_str,
+            ])
+
+        stop.set()
+        drain_t.join(timeout=2.0)
+
+        # Final drain
+        samples = sensor.drain()
+        if samples:
+            write_sensor_rows(sw, samples)
+            sample_count += len(samples)
+        events = keyboard.drain()
+        if events:
+            write_event_rows(ew, events, participant, session_id)
+            event_count += len(events)
+
+        sf.flush(); sf.close()
+        ef.flush(); ef.close()
+        alf.flush(); alf.close()
+
+        with open(protocol_path, "w") as f:
+            json.dump({
+                "session_id": session_id,
+                "trial_idx": trial_idx,
+                "participant": participant,
+                "protocol": protocol,
+                "sample_count": sample_count,
+                "event_count": event_count,
+            }, f, indent=2)
+
+        print(f"    ✓ {sample_count:,} sensor + {event_count} key events")
+
+    sensor.stop()
+    keyboard.stop()
+    print(f"\n  ✓ All {n_trials} trials recorded.")
+    print(f"  Output → {output_dir}\n")
+
+
+# ── Activity log loading helper ──────────────────────────────
+
+def load_activity_log(path: str) -> list[dict]:
+    """
+    Load an activity_log.csv and return list of dicts with fields:
+      start_time_ns, end_time_ns, activity, label, typing_style, prompts
+
+    Works for both mixed and mixed2 formats.
+    """
+    segments = []
+    with open(path, "r") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            seg = {
+                "start_time_ns": int(row["start_time_ns"]),
+                "end_time_ns": int(row["end_time_ns"]),
+                "activity": row.get("activity", ""),
+            }
+            # mixed2 format has extra columns
+            seg["label"] = row.get("label", row.get("activity", ""))
+            seg["typing_style"] = row.get("typing_style", "")
+
+            prompts_raw = row.get("prompts", row.get("prompt", ""))
+            if prompts_raw and prompts_raw.startswith("["):
+                try:
+                    seg["prompts"] = json.loads(prompts_raw)
+                except json.JSONDecodeError:
+                    seg["prompts"] = [prompts_raw] if prompts_raw else []
+            else:
+                seg["prompts"] = [prompts_raw] if prompts_raw else []
+
+            segments.append(seg)
+    return segments
+
+
+def get_keyboard_episodes_from_activity_log(
+    segments: list[dict],
+) -> list[dict]:
+    """
+    Extract keyboard episodes from activity log segments.
+    Returns list of dicts with: start_s, end_s, label, typing_style, prompts
+    """
+    episodes = []
+    for seg in segments:
+        if seg["activity"] == "keyboard":
+            episodes.append({
+                "start_s": seg["start_time_ns"] / 1e9,
+                "end_s": seg["end_time_ns"] / 1e9,
+                "label": seg["label"],
+                "typing_style": seg.get("typing_style", ""),
+                "prompts": seg.get("prompts", []),
+            })
+    return episodes
+
+
 # ── CLI ──────────────────────────────────────────────────────
 
 def main():
@@ -388,8 +637,9 @@ def main():
         help="Project root directory for resolving imports and default output paths.",
     )
     parser.add_argument(
-        "--mode", choices=["negative", "mixed"], required=True,
-        help="negative: single-activity negative samples. mixed: interleaved evaluation streams."
+        "--mode", choices=["negative", "mixed", "mixed2"], required=True,
+        help="negative: single-activity. mixed: random interleaved. "
+             "mixed2: structured 2-min protocol with typing_1/typing_2."
     )
     parser.add_argument("--activity", choices=NEGATIVE_ACTIVITIES, default="idle",
                         help="Activity type for negative mode")
@@ -399,6 +649,10 @@ def main():
                         help="Number of mixed segments (default: 15)")
     parser.add_argument("--segment-sec", type=float, default=30.0,
                         help="Approx duration per mixed segment (default: 30)")
+    parser.add_argument("--n-trials", type=int, default=5,
+                        help="Number of mixed2 trials (default: 5)")
+    parser.add_argument("--n-passwords", type=int, default=5,
+                        help="Passwords per mixed2 trial (default: 5)")
     parser.add_argument("--output-dir", default="",
                         help="Override output directory")
     parser.add_argument("--participant", default="p01")
@@ -426,6 +680,19 @@ def main():
         run_mixed_mode(
             n_segments=args.n_segments,
             segment_sec=args.segment_sec,
+            output_dir=out_dir,
+            participant=args.participant,
+            seed=args.seed,
+        )
+    elif args.mode == "mixed2":
+        out_dir = args.output_dir or "data/raw/onset_mixed2"
+        if args.project_root:
+            _setup_imports(args.project_root)
+            if not os.path.isabs(out_dir):
+                out_dir = os.path.join(os.path.abspath(args.project_root), out_dir)
+        run_mixed2_mode(
+            n_trials=args.n_trials,
+            n_passwords=args.n_passwords,
             output_dir=out_dir,
             participant=args.participant,
             seed=args.seed,

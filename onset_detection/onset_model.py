@@ -1,16 +1,14 @@
 """
 Onset Detection Model
 =====================
-Lightweight 1D-CNN binary classifier for keystroke onset detection.
+Models for keystroke onset detection AND keyboard activity segmentation.
 
-Input:  (batch, timesteps, 6)   – 6-channel IMU window
-Output: (batch, 1)              – sigmoid probability of keystroke onset
+Two tasks:
+  1. OnsetCNN / OnsetCNNLarge: binary onset point detection
+  2. ActivitySegmentCNN:       frame-level keyboard-active vs inactive
 
-Design rationale:
-- Detection windows are short (~29 samples @ 190 Hz = 150ms)
-- The task is *binary* (onset vs not-onset), much simpler than 36-class key ID
-- Inference must be fast enough for real-time sliding-window scanning
-- A simple 3-layer 1D-CNN with ~25k params is more than sufficient
+The activity segmenter uses wider kernels to capture sustained typing
+energy patterns rather than single-keystroke transients.
 
 Also provides an energy-based baseline for ablation.
 """
@@ -56,29 +54,18 @@ class OnsetCNN(nn.Module):
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: (batch, timesteps, channels)
-        Returns:
-            logits: (batch, 1) – raw logits (use sigmoid for probability)
-        """
-        # Conv1d expects (batch, channels, timesteps)
         x = x.permute(0, 2, 1)
         x = self.features(x)
         return self.classifier(x)
 
     def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
-        """Return sigmoid probabilities, shape (batch,)."""
         with torch.no_grad():
             logits = self.forward(x)
             return torch.sigmoid(logits).squeeze(-1)
 
 
 class OnsetCNNLarge(nn.Module):
-    """
-    Slightly larger variant (5 layers, ~80k params) for ablation.
-    Use if OnsetCNN under-fits on more complex mixed-stream data.
-    """
+    """Slightly larger variant (5 layers, ~80k params) for ablation."""
 
     def __init__(self, n_channels: int = 6, dropout: float = 0.2):
         super().__init__()
@@ -124,40 +111,81 @@ class OnsetCNNLarge(nn.Module):
             return torch.sigmoid(logits).squeeze(-1)
 
 
+class ActivitySegmentCNN(nn.Module):
+    """
+    Frame-level keyboard activity detector.
+
+    Given a wider IMU window (~400ms), outputs probability that the window
+    is part of an active keyboard-typing episode (vs idle/trackpad/shake).
+
+    Wider kernels than OnsetCNN to capture the sustained multi-impulse
+    pattern of typing vs single transient events.
+
+    Architecture:
+        Conv1d(6→32, k=9) → BN → ReLU → Dropout
+        Conv1d(32→64, k=7) → BN → ReLU → Dropout
+        Conv1d(64→64, k=5) → BN → ReLU → Dropout
+        Conv1d(64→32, k=3) → BN → ReLU
+        GlobalAvgPool → FC(32→1)
+    """
+
+    def __init__(self, n_channels: int = 6, dropout: float = 0.3):
+        super().__init__()
+        self.features = nn.Sequential(
+            nn.Conv1d(n_channels, 32, kernel_size=9, padding=4, bias=False),
+            nn.BatchNorm1d(32),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+
+            nn.Conv1d(32, 64, kernel_size=7, padding=3, bias=False),
+            nn.BatchNorm1d(64),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+
+            nn.Conv1d(64, 64, kernel_size=5, padding=2, bias=False),
+            nn.BatchNorm1d(64),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+
+            nn.Conv1d(64, 32, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm1d(32),
+            nn.ReLU(inplace=True),
+        )
+        self.classifier = nn.Sequential(
+            nn.AdaptiveAvgPool1d(1),
+            nn.Flatten(),
+            nn.Linear(32, 1),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.permute(0, 2, 1)
+        x = self.features(x)
+        return self.classifier(x)
+
+    def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
+        with torch.no_grad():
+            logits = self.forward(x)
+            return torch.sigmoid(logits).squeeze(-1)
+
+
 # ── Energy-based baseline (no learned parameters) ────────────
 
 class EnergyOnsetBaseline:
-    """
-    Simple energy-threshold onset detector for ablation comparison.
-
-    Computes per-window RMS energy across all channels, then thresholds.
-    No training required – just needs a threshold calibrated on validation data.
-    """
+    """Simple energy-threshold onset detector for ablation comparison."""
 
     def __init__(self, threshold: float = 0.0):
         self.threshold = threshold
 
     def compute_energy(self, windows: "np.ndarray") -> "np.ndarray":
-        """
-        Args:
-            windows: (N, timesteps, channels)
-        Returns:
-            energy: (N,)
-        """
         import numpy as np
         return np.sqrt(np.mean(windows ** 2, axis=(1, 2)))
 
     def predict(self, windows: "np.ndarray") -> "np.ndarray":
-        """Binary prediction: 1 if energy > threshold."""
         import numpy as np
         energy = self.compute_energy(windows)
         return (energy > self.threshold).astype(np.int32)
 
     def calibrate(self, windows: "np.ndarray", labels: "np.ndarray"):
-        """
-        Set threshold as the midpoint between mean energy of positive
-        and negative windows.
-        """
         import numpy as np
         pos_energy = self.compute_energy(windows[labels == 1])
         neg_energy = self.compute_energy(windows[labels == 0])
@@ -175,5 +203,7 @@ def build_onset_model(name: str = "cnn", n_channels: int = 6, **kwargs) -> nn.Mo
         return OnsetCNN(n_channels=n_channels, **kwargs)
     elif name == "cnn_large":
         return OnsetCNNLarge(n_channels=n_channels, **kwargs)
+    elif name == "activity_cnn":
+        return ActivitySegmentCNN(n_channels=n_channels, **kwargs)
     else:
         raise ValueError(f"Unknown onset model: {name}")

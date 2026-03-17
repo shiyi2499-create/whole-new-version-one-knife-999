@@ -1,77 +1,120 @@
-# Onset Detection Module
+# Onset Detection & Keyboard Activity Segmentation Module
 
-Keystroke onset detection for the Apple Internal IMU side-channel attack.
+Keystroke onset detection **and keyboard activity boundary segmentation** for
+the Apple Internal IMU side-channel attack.
 
-This module fills the missing link in the attack chain: given a continuous
-IMU data stream, automatically determine **when** keystrokes occur, estimate
-when a keyboard-activity episode starts and ends, then hand the password-like
-windows to the existing password classifier.
+This module handles the two critical "where" questions in the attack chain:
 
-## Architecture
+1. **Activity Segmentation**: In a continuous mixed stream, *where* does
+   keyboard activity start and end? Which episode is free typing vs
+   password-style typing?
+2. **Onset Detection**: Within a keyboard episode, *when* does each
+   individual keystroke occur?
+
+The segmentation output feeds directly into the existing password classifier:
+only the `typing_2` (password-style) episodes are passed downstream.
+
+## Architecture Overview
 
 ```
-continuous IMU stream
-  → onset_preprocessor.py  (build sliding-window dataset from existing data)
-  → train_onset.py         (train 1D-CNN binary classifier)
-  → eval_onset.py          (segment-level + event-level metrics)
-  → eval_onset_e2e.py      (onset / episode boundary → classifier → password top-k)
+continuous IMU stream (~2 min mixed)
+  │
+  ├─ Activity Segmenter (ActivitySegmentCNN)
+  │     ├─ frame-level keyboard-active probability curve
+  │     ├─ threshold + merge → Episode boundaries
+  │     └─ typing_1/typing_2 classification (demo-protocol heuristic*)
+  │
+  └─ Onset Detector (OnsetCNN)
+        ├─ within typing_2 episode(s) only
+        ├─ peak detection + NMS → onset timestamps
+        ├─ gap-based grouping → per-password onset groups
+        └─ cut 300ms windows → password classifier → top-k recovery
+
+* typing_1 vs typing_2 uses median IKI + keystroke rate thresholds,
+  not a learned classifier.  See classify_episodes_by_density() docs.
 ```
 
-For new data collection:
+## Two Attack Paths
+
+### Path A: Password session (original)
 ```
-onset_collector.py --mode negative   (idle / trackpad / shake / etc.)
-onset_collector.py --mode mixed      (interleaved evaluation streams)
+password session → onset detect → classifier → top-k
+```
+
+### Path B: Mixed2 stream (new, paper demo target)
+```
+~2 min mixed stream
+  → activity segment → find typing_2 episode
+  → onset detect within typing_2
+  → gap-based password grouping (no GT)
+  → classifier → password recovery
 ```
 
 ## File Map
 
 | File | Role |
 |------|------|
-| `onset_utils.py` | Peak detection, NMS, event matching, metrics |
-| `onset_model.py` | 1D-CNN onset detector (+ energy baseline) |
-| `onset_preprocessor.py` | Build sliding-window dataset from raw data |
-| `onset_dataset.py` | PyTorch Dataset + session-level splitting |
-| `train_onset.py` | Training script with balanced sampling |
-| `onset_collector.py` | Negative sample + mixed-stream collector |
-| `eval_onset.py` | Segment-level + event-level evaluation |
-| `eval_onset_e2e.py` | Full attack chain: onset → classifier → top-k |
+| `onset_utils.py` | Peak detection, NMS, event matching, **episode metrics (IoU, boundary error, separation)** |
+| `onset_model.py` | OnsetCNN + OnsetCNNLarge + **ActivitySegmentCNN** + energy baseline |
+| `onset_preprocessor.py` | Sliding-window dataset builder for **both onset and activity tasks** |
+| `onset_dataset.py` | PyTorch Dataset + session-level splitting (supports activity_labels) |
+| `train_onset.py` | Training script with **`--task onset` / `--task activity`** modes |
+| `onset_collector.py` | Negative + mixed + **mixed2** (structured 2-min protocol) collection |
+| `eval_onset.py` | Segment-level + event-level + **episode boundary evaluation** |
+| `eval_onset_e2e.py` | Full chain: **Path A** (onset→classify) + **Path B** (segment→typing_2→classify) |
 
-## Quick Start (MVP)
+## Quick Start
 
-### Step 1: Build dataset from existing data (keyboard positives only)
+### Step 1: Collect structured 2-minute mixed streams
 
-Uses existing single_key + password sessions as a first sanity check:
+```bash
+python3 onset_detection/onset_collector.py --mode mixed2 --n-trials 5
+```
+
+This records the protocol:
+idle → trackpad_move → typing_1 (free) → trackpad_click → shake →
+typing_2 (password) → desk_bump → idle
+
+Each trial produces:
+- `*_sensor.csv` – continuous IMU data
+- `*_events.csv` – keyboard events with timestamps
+- `*_activity_log.csv` – ground-truth segment boundaries with labels
+- `*_protocol.json` – full protocol definition
+
+### Step 2: Build activity segmentation dataset
 
 ```bash
 python3 onset_detection/onset_preprocessor.py \
+  --task activity \
+  --mixed2-dirs data/raw/onset_mixed2 \
   --keyboard-dirs data/raw/single_key data/raw/boost \
-  --password-dirs data/raw/password/len_8 \
-  --output data/processed/onset_dataset_keyboard_only.npz
+  --negative-dirs data/raw/onset_negative \
+  --output data/processed/activity_dataset.npz
 ```
 
-### Step 2: Collect nuisance-motion negative samples
+**Data source roles for activity segmentation:**
+- `--mixed2-dirs`: **primary source** — provides real activity transition
+  boundaries from `activity_log.csv`.  The model learns where keyboard
+  activity starts and ends relative to idle/trackpad/shake.
+- `--keyboard-dirs`: **supplementary positives** — entire sessions are
+  labelled keyboard-active.  Adds positive-class IMU diversity but does
+  NOT contribute real start/end boundary supervision (boundaries are the
+  session edges, not ecological activity transitions).
+- `--negative-dirs`: inactive-class samples, no boundary information.
 
-**This is required for a credible result.** Without trackpad/idle negatives,
-the detector only sees keystroke-vs-interkey-gap and cannot reject the
-most important real-world confounders (trackpad clicks produce mechanical
-impulses similar to keystrokes).
-
-Minimum set for MVP — record at least 60s of each:
+### Step 3: Train activity segmenter
 
 ```bash
-python3 onset_detection/onset_collector.py --mode negative --activity idle --duration 60
-python3 onset_detection/onset_collector.py --mode negative --activity trackpad_move --duration 60
-python3 onset_detection/onset_collector.py --mode negative --activity trackpad_click --duration 60
+python3 onset_detection/train_onset.py \
+  --task activity \
+  --dataset data/processed/activity_dataset.npz \
+  --epochs 80
 ```
 
-Strongly recommended additions (can follow after the initial three):
+Automatically selects `ActivitySegmentCNN` and saves to
+`results/activity_detector.pt` + `results/activity_scaler.npz`.
 
-```bash
-python3 onset_detection/onset_collector.py --mode negative --activity shake --duration 45
-python3 onset_detection/onset_collector.py --mode negative --activity desk_bump --duration 45
-```
-
-### Step 3: Build full dataset (keyboard + negatives)
+### Step 4: Build onset detection dataset (unchanged)
 
 ```bash
 python3 onset_detection/onset_preprocessor.py \
@@ -81,7 +124,7 @@ python3 onset_detection/onset_preprocessor.py \
   --output data/processed/onset_dataset.npz
 ```
 
-### Step 4: Train onset detector
+### Step 5: Train onset detector (unchanged)
 
 ```bash
 python3 onset_detection/train_onset.py \
@@ -91,93 +134,145 @@ python3 onset_detection/train_onset.py \
   --epochs 80
 ```
 
-### Step 5: Evaluate (segment-level)
+### Step 6: Evaluate activity segmentation
 
 ```bash
+# Episode boundary metrics on mixed2 streams
 python3 onset_detection/eval_onset.py \
+  --task activity \
+  --mixed2-dirs data/raw/onset_mixed2
+
+# Joint evaluation (both onset + activity)
+python3 onset_detection/eval_onset.py \
+  --task both \
   --checkpoint results/onset_detector.pt \
   --scaler results/onset_scaler.npz \
-  --dataset data/processed/onset_dataset.npz
+  --activity-checkpoint results/activity_detector.pt \
+  --activity-scaler results/activity_scaler.npz \
+  --mixed2-dirs data/raw/onset_mixed2
 ```
 
-### Step 6 (recommended): Collect mixed evaluation streams
-
-```bash
-python3 onset_detection/onset_collector.py --mode mixed --n-segments 15
-
-# Event-level evaluation on mixed streams
-python3 onset_detection/eval_onset.py \
-  --checkpoint results/onset_detector.pt \
-  --scaler results/onset_scaler.npz \
-  --mixed-dirs data/raw/onset_mixed
-```
-
-### Step 7: End-to-end attack chain demo
+### Step 7: Full E2E attack chain on mixed2 streams
 
 ```bash
 python3 onset_detection/eval_onset_e2e.py \
   --onset-checkpoint results/onset_detector.pt \
   --onset-scaler results/onset_scaler.npz \
+  --activity-checkpoint results/activity_detector.pt \
+  --activity-scaler results/activity_scaler.npz \
   --classifier-checkpoint results/inception_password_final.pt \
   --classifier-scaler results/inception_password_scaler.npz \
-  --password-dirs data/raw/password/len_8 \
-  --test-parts 17 18 19 20
+  --mixed2-dirs data/raw/onset_mixed2
 ```
 
-## Paper-Oriented Demo Goal
+This runs **both** Path A (password sessions) and Path B (mixed2 streams)
+and reports four comparison baselines for Path B:
 
-The current paper-oriented target is **not** a 1-hour monitoring demo.
-Instead, the preferred controlled demo is a ~2-minute mixed stream:
+1. **Full E2E**: activity segment → typing_2 → onset → gap-based grouping → classify
+   (zero GT information)
+2. **GT-segment**: GT typing_2 boundary → onset → gap-based grouping → classify
+   (GT boundary only)
+3. **GT-aligned**: GT boundary → onset → GT-onset-assisted per-password alignment → classify
+   (GT boundary + GT onset timing — explicit oracle baseline)
+4. **GT-onset baseline**: GT onset times → classify (full oracle)
 
-- several non-keyboard intervals:
-  - idle
-  - trackpad_move
-  - trackpad_click
-  - shake / desk_bump
-- two keyboard episodes:
-  - `typing_1`: free/random typing
-  - `typing_2`: slow password-style typing that matches the current
-    `a-z0-9`, `len=8` password protocol
+This decomposition isolates degradation sources:
+- Full E2E − GT baseline = total pipeline degradation
+- GT-segment − GT baseline = onset detection + grouping error (segmentation removed)
+- GT-aligned − GT baseline = onset detection error only (grouping also removed)
 
-The intended claim is:
+## Mixed2 Protocol Design
 
-1. detect where keyboard activity starts
-2. detect where keyboard activity ends
-3. separate `typing_1` from `typing_2`
-4. only on `typing_2`, run the existing password classifier and recover the
-   password-like content
+The `--mode mixed2` collector implements a fixed ~2-minute protocol:
 
-This keeps the onset section aligned with the current paper scope:
-feasibility of controlled continuous-stream attack, rather than long-term
-deployment monitoring.
+| Segment | Activity | Duration | Label |
+|---------|----------|----------|-------|
+| 1 | idle | 10s | idle_1 |
+| 2 | trackpad_move | 12s | trackpad_move_1 |
+| 3 | **keyboard (free)** | 20s | **typing_1** |
+| 4 | trackpad_click | 10s | trackpad_click_1 |
+| 5 | shake | 8s | shake_1 |
+| 6 | **keyboard (password)** | 25s | **typing_2** |
+| 7 | desk_bump | 8s | desk_bump_1 |
+| 8 | idle | 10s | idle_2 |
 
-## Detection Protocol
+The two keyboard segments differ in:
+- **typing_1**: free typing (faster, varied content)
+- **typing_2**: controlled password typing (8-char a-z0-9, slower IKI)
 
-- **Window**: 150ms sliding window (29 samples @ 190Hz)
-- **Stride**: 25ms (5 samples) → 40 classifications per second
-- **Label**: positive if window centre is within ±30ms of a keystroke
-- **Post-processing**: smooth probability curve → peak detection → NMS (±100ms)
-- **Model**: 3-layer 1D-CNN, ~25k parameters
+This protocol supports the paper claim: the system can distinguish and
+correctly segment the password-typing episode from a realistic mixed stream.
 
 ## Metrics Reported
 
-### Segment-level (on held-out windows)
+### Segment-level (held-out windows)
 - AUC-ROC, Precision, Recall, F1, Accuracy
+- For both onset and activity tasks
 
-### Event-level (on continuous streams)
+### Event-level (continuous streams)
 - Event Precision / Recall / F1 at ±50ms tolerance
 - Timing error (mean, median, std) in milliseconds
 - False alarms per minute
 - Tolerance sweep at ±25 / 50 / 75 / 100 ms
-- Keyboard-activity episode start / end boundary error
-- Whether two keyboard episodes in a mixed stream are correctly separated
+
+### Episode boundary metrics (NEW)
+1. **Start boundary error** (ms): |predicted_start − GT_start|
+2. **End boundary error** (ms): |predicted_end − GT_end|
+3. **Episode IoU**: temporal intersection-over-union
+4. **2-episode separation**: whether typing_1 and typing_2 are
+   correctly identified as distinct episodes
+5. **Separation accuracy**: fraction of streams where separation succeeds
 
 ### End-to-end (onset → classifier)
 - char_top1 / top3 / top5
-- sequence_top10 / top50 / top100 (beam-search candidate matching)
+- sequence_top10 / top50 / top100
 - CER
-- Δ degradation compared to ground-truth onset baseline
-- Missed characters (onset FN) and extra characters (onset FP)
+- Δ degradation tables: Full E2E / GT-segment / GT-aligned / GT-onset
+- Missed characters (onset FN) and extra characters (onset FP) (Path A)
+
+## Design Decisions
+
+1. **Two-stage pipeline** (activity segmenter + onset detector):
+   More robust than a single model trying to do both. The activity
+   segmenter sees wider context (400ms windows) while the onset
+   detector uses precise 150ms windows.
+
+2. **Episode typing style classification — demo-protocol heuristic**:
+   `classify_episodes_by_density()` uses two hand-tuned features:
+   median IKI > 0.6s and keystroke rate < 2.5 Hz.
+   **This is NOT a learned classifier.** It is designed specifically for
+   the structured 2-minute mixed2 protocol where typing_1 is continuous
+   free text and typing_2 is slow 8-char password entry.  It will not
+   generalise to arbitrary typing tasks without re-tuning or replacement
+   with a learned episode-level classifier.
+
+3. **ActivitySegmentCNN uses wider kernels** (k=9,7,5,3):
+   Needs to capture sustained multi-keystroke energy patterns,
+   not just single transients.
+
+4. **Four-way comparison in Path B E2E**:
+   Full E2E / GT-segment / GT-aligned / GT-onset baselines.
+   Full E2E uses NO ground-truth information — per-password grouping
+   is done via gap-based splitting of predicted onsets.
+   GT-aligned is the explicit oracle baseline that uses GT onset times
+   for per-password alignment, kept separate to avoid contaminating
+   the full E2E numbers.
+
+5. **Gap-based per-password grouping**:
+   Within a predicted typing_2 episode, detected onsets are split into
+   N groups (N = number of passwords from protocol) by finding the
+   (N−1) largest inter-onset gaps.  This is a reasonable heuristic
+   for the demo protocol where passwords are separated by deliberate
+   pauses (Enter key + prompt reading).
+
+6. **Activity dataset: mixed2 as primary boundary source**:
+   mixed2 sessions provide real activity-transition boundaries.
+   single_key/password sessions are supplementary positives that add
+   intra-episode IMU diversity but do NOT provide ecologically valid
+   start/end boundary supervision.
+
+7. **Backward compatibility**: All original onset detection functionality
+   is preserved. Path A works exactly as before.
 
 ## Integration Notes
 
@@ -185,24 +280,3 @@ deployment monitoring.
 - Reuses `sensor_reader.py`, `spu_backend.py`, `keyboard_listener.py` via import
 - Loads password classifier checkpoint without modification
 - All onset-specific code lives in the `onset_detection/` directory
-
-## Design Decisions
-
-1. **Sliding window binary classification** (not seq2seq / CTC):
-   simpler, more robust with limited data, easy to tune threshold
-
-2. **150ms detection window** (not 300ms classifier window):
-   onset detection needs only the impact transient, not the full
-   pre/post context that the key-identity classifier uses
-
-3. **NMS radius 100ms**: conservative enough to avoid merging adjacent
-   keystrokes in slow controlled typing (IKI typically 500-1500ms in
-   our current protocol) while suppressing duplicate detections of
-   the same keystroke.  The radius can be tightened later if the
-   protocol moves to faster typing speeds.
-
-4. **Session-level splitting**: prevents any data leakage between
-   train/val/test splits, matching the main project's protocol
-
-5. **Balanced sampling** (default on): handles the natural ~1:4 pos/neg
-   ratio from sliding windows without manual under/oversampling

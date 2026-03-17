@@ -1,7 +1,9 @@
 """
-Onset Detection Training
-========================
-Train a 1D-CNN onset detector on the preprocessed sliding-window dataset.
+Onset Detection / Activity Segmentation Training
+=================================================
+Train either:
+  1. onset detector (1D-CNN binary: keystroke onset vs not)
+  2. activity segmenter (1D-CNN binary: keyboard-active frame vs inactive)
 
 Features:
   - Session-level train/val/test split (no leakage)
@@ -11,9 +13,15 @@ Features:
   - Saves best checkpoint + scaler (means/stds) for downstream use
 
 Run:
-  python3 train_onset.py
-  python3 train_onset.py --dataset data/processed/onset_dataset.npz --epochs 100
-  python3 train_onset.py --model cnn_large --focal-loss
+  # Onset detection (default)
+  python3 train_onset.py --dataset data/processed/onset_dataset.npz
+
+  # Activity segmentation
+  python3 train_onset.py --task activity \\
+    --dataset data/processed/activity_dataset.npz \\
+    --model activity_cnn \\
+    --checkpoint results/activity_detector.pt \\
+    --scaler results/activity_scaler.npz
 """
 
 from __future__ import annotations
@@ -41,10 +49,6 @@ from onset_model import build_onset_model
 # ── Focal Loss ───────────────────────────────────────────────
 
 class FocalBCELoss(nn.Module):
-    """
-    Focal loss for binary classification.
-    Down-weights easy examples, focuses on hard ones.
-    """
     def __init__(self, gamma: float = 2.0, pos_weight: float = 1.0):
         super().__init__()
         self.gamma = gamma
@@ -53,15 +57,10 @@ class FocalBCELoss(nn.Module):
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         probs = torch.sigmoid(logits.squeeze(-1))
         targets = targets.float()
-
-        # Standard BCE terms
         bce = -targets * torch.log(probs + 1e-8) * self.pos_weight \
               - (1 - targets) * torch.log(1 - probs + 1e-8)
-
-        # Focal modulation
         pt = targets * probs + (1 - targets) * (1 - probs)
         focal_weight = (1 - pt) ** self.gamma
-
         return (focal_weight * bce).mean()
 
 
@@ -72,14 +71,12 @@ def compute_binary_metrics(
     labels: np.ndarray,
     threshold: float = 0.5,
 ) -> dict:
-    """Compute P/R/F1/AUC for binary onset classification."""
     from sklearn.metrics import precision_recall_fscore_support, roc_auc_score
 
     preds = (probs >= threshold).astype(int)
     p, r, f1, _ = precision_recall_fscore_support(
         labels, preds, average="binary", zero_division=0,
     )
-
     try:
         auc = roc_auc_score(labels, probs)
     except ValueError:
@@ -126,11 +123,13 @@ def train_onset_detector(
     balanced: bool = True,
     focal_loss: bool = False,
     seed: int = 42,
+    task: str = "onset",
 ):
     torch.manual_seed(seed)
     np.random.seed(seed)
     device = resolve_device(device_str)
     print(f"Device: {device}")
+    print(f"Task: {task}")
 
     # Load data
     data = load_onset_dataset(dataset_path)
@@ -145,7 +144,7 @@ def train_onset_detector(
     train_idx, val_idx, test_idx = session_split(sessions, labels, seed=seed)
     print(f"Split: train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)}")
 
-    # Compute normalisation on TRAINING data only
+    # Normalisation on TRAINING data only
     train_windows = windows[train_idx]
     means = train_windows.mean(axis=(0, 1))
     stds = train_windows.std(axis=(0, 1))
@@ -176,6 +175,11 @@ def train_onset_detector(
 
     # Model
     n_channels = data["n_channels"]
+    # Auto-select model for activity task
+    if task == "activity" and model_name == "cnn":
+        model_name = "activity_cnn"
+        print(f"  Auto-selected model: {model_name} for activity task")
+
     model = build_onset_model(model_name, n_channels=n_channels).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model: {model_name} ({n_params:,} params)")
@@ -201,13 +205,13 @@ def train_onset_detector(
     patience_ctr = 0
     history = []
 
+    task_label = "activity segmenter" if task == "activity" else "onset detector"
     print(f"\n{'='*60}")
-    print(f"  Training onset detector: {epochs} epochs, batch={batch_size}, lr={lr}")
+    print(f"  Training {task_label}: {epochs} epochs, batch={batch_size}, lr={lr}")
     print(f"{'='*60}\n")
 
     t0 = time.time()
     for epoch in range(epochs):
-        # Train
         model.train()
         train_loss = 0.0
         train_n = 0
@@ -267,7 +271,6 @@ def train_onset_detector(
     elapsed = time.time() - t0
     print(f"\n  Training complete in {elapsed:.1f}s  |  Best val F1: {best_val_f1:.3f}")
 
-    # Restore best model
     if best_state is not None:
         model.load_state_dict(best_state)
 
@@ -305,15 +308,15 @@ def train_onset_detector(
         "label_radius_ms": data["label_radius_ms"],
         "target_rate_hz": data["target_rate_hz"],
         "best_val_f1": best_val_f1,
+        "task": task,
     }, checkpoint_path)
     print(f"  Saved checkpoint → {checkpoint_path}")
 
-    # Save scaler
     np.savez(scaler_path, means=means, stds=stds)
     print(f"  Saved scaler → {scaler_path}")
 
-    # Save report
     report = {
+        "task": task,
         "model_name": model_name,
         "n_params": n_params,
         "device": str(device),
@@ -337,14 +340,15 @@ def train_onset_detector(
 # ── CLI ──────────────────────────────────────────────────────
 
 def main():
-    p = argparse.ArgumentParser(description="Train onset detector")
-    p.add_argument("--project-root", default="",
-                   help="Project root directory. Relative paths resolve from here.")
+    p = argparse.ArgumentParser(description="Train onset detector or activity segmenter")
+    p.add_argument("--project-root", default="")
+    p.add_argument("--task", choices=["onset", "activity"], default="onset",
+                   help="onset: keystroke onset detection. activity: keyboard activity segmentation.")
     p.add_argument("--dataset", default="data/processed/onset_dataset.npz")
     p.add_argument("--checkpoint", default="results/onset_detector.pt")
     p.add_argument("--scaler", default="results/onset_scaler.npz")
     p.add_argument("--report", default="results/onset_training_report.json")
-    p.add_argument("--model", choices=["cnn", "cnn_large"], default="cnn")
+    p.add_argument("--model", choices=["cnn", "cnn_large", "activity_cnn"], default="cnn")
     p.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
     p.add_argument("--epochs", type=int, default=80)
     p.add_argument("--batch-size", type=int, default=64)
@@ -355,7 +359,17 @@ def main():
     p.add_argument("--seed", type=int, default=42)
     args = p.parse_args()
 
-    # Resolve relative paths from project root
+    # Auto-adjust defaults for activity task
+    if args.task == "activity":
+        if args.dataset == "data/processed/onset_dataset.npz":
+            args.dataset = "data/processed/activity_dataset.npz"
+        if args.checkpoint == "results/onset_detector.pt":
+            args.checkpoint = "results/activity_detector.pt"
+        if args.scaler == "results/onset_scaler.npz":
+            args.scaler = "results/activity_scaler.npz"
+        if args.report == "results/onset_training_report.json":
+            args.report = "results/activity_training_report.json"
+
     if args.project_root:
         root = os.path.abspath(args.project_root)
         for attr in ("dataset", "checkpoint", "scaler", "report"):
@@ -377,6 +391,7 @@ def main():
         balanced=not args.no_balanced,
         focal_loss=args.focal_loss,
         seed=args.seed,
+        task=args.task,
     )
 
 

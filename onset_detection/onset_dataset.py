@@ -1,10 +1,10 @@
 """
 Onset Detection Dataset
 =======================
-PyTorch Dataset wrapper for onset detection training / evaluation.
+PyTorch Dataset wrapper for onset detection AND activity segmentation.
 
 Supports:
-  - Loading from onset_dataset.npz (output of onset_preprocessor.py)
+  - Loading from onset_dataset.npz or activity_dataset.npz
   - Session-level train/val/test splitting (prevents data leakage)
   - On-the-fly augmentation (time jitter, noise, scaling, channel dropout)
   - Class-balanced sampling via WeightedRandomSampler
@@ -21,7 +21,7 @@ from typing import Optional
 
 class OnsetWindowDataset(Dataset):
     """
-    Windowed onset detection dataset.
+    Windowed onset/activity detection dataset.
 
     Each sample is a (window, label) pair where:
       window: (timesteps, 6)  float32
@@ -41,7 +41,6 @@ class OnsetWindowDataset(Dataset):
         self.labels = labels.astype(np.int64)
         self.augment = augment
 
-        # Channel-wise normalization
         if normalize:
             if means is None:
                 means = self.windows.mean(axis=(0, 1))
@@ -68,10 +67,6 @@ class OnsetWindowDataset(Dataset):
 
     @staticmethod
     def _apply_augmentation(w: torch.Tensor, p: float = 0.5) -> torch.Tensor:
-        """
-        Light augmentation for onset detection.
-        Applied independently per sample with probability p.
-        """
         if torch.rand(1).item() > p:
             return w
 
@@ -79,19 +74,15 @@ class OnsetWindowDataset(Dataset):
         aug_type = torch.randint(0, 4, (1,)).item()
 
         if aug_type == 0:
-            # Time shift: roll by ±10%
             shift = torch.randint(-max(1, T // 10), max(2, T // 10 + 1), (1,)).item()
             w = torch.roll(w, shifts=shift, dims=0)
         elif aug_type == 1:
-            # Additive Gaussian noise
             std = w.std() * 0.02
             w = w + torch.randn_like(w) * std
         elif aug_type == 2:
-            # Amplitude scaling
             scale = 0.8 + 0.4 * torch.rand(1).item()
             w = w * scale
         elif aug_type == 3:
-            # Channel dropout
             ch = torch.randint(0, C, (1,)).item()
             w[:, ch] = 0.0
 
@@ -110,9 +101,6 @@ def session_split(
     """
     Split indices into train/val/test by session ID.
     No session appears in more than one split.
-
-    Returns:
-        (train_indices, val_indices, test_indices) as numpy arrays
     """
     rng = np.random.RandomState(seed)
 
@@ -127,7 +115,6 @@ def session_split(
     val_sessions = set(unique_sessions[n_train:n_train + n_val].tolist())
     test_sessions = set(unique_sessions[n_train + n_val:].tolist())
 
-    # If test is empty (too few sessions), steal from val
     if not test_sessions and len(val_sessions) > 1:
         test_sessions = {val_sessions.pop()}
 
@@ -141,7 +128,6 @@ def session_split(
 # ── Balanced sampler ─────────────────────────────────────────
 
 def make_balanced_sampler(labels: np.ndarray) -> WeightedRandomSampler:
-    """Create a WeightedRandomSampler that balances positive/negative windows."""
     counts = np.bincount(labels.astype(int), minlength=2)
     weights_per_class = 1.0 / np.maximum(counts, 1).astype(np.float64)
     sample_weights = weights_per_class[labels.astype(int)]
@@ -157,7 +143,7 @@ def make_balanced_sampler(labels: np.ndarray) -> WeightedRandomSampler:
 def load_onset_dataset(path: str) -> dict:
     """Load onset_dataset.npz and return all arrays + metadata."""
     data = np.load(path, allow_pickle=True)
-    return {
+    result = {
         "windows": data["windows"],
         "labels": data["labels"],
         "times_s": data["times_s"],
@@ -169,3 +155,9 @@ def load_onset_dataset(path: str) -> dict:
         "target_rate_hz": int(data["target_rate_hz"]),
         "n_channels": int(data["n_channels"]),
     }
+    # Activity dataset may have extra fields
+    if "activity_labels" in data:
+        result["activity_labels"] = data["activity_labels"].astype(str)
+    if "task" in data:
+        result["task"] = str(data["task"])
+    return result

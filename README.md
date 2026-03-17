@@ -222,9 +222,18 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
     - `sequence_top100 = 65.0%`
     - `CER = 26.6%`
   - 指标：`char top-1/top-3/top-5`、`sequence top-10/top-50/top-100`、`CER`
-- 🟥【待办】Step 5: continuous stream 中的 keystroke onset detection
-  - 目标：在连续 IMU 流中自动判断“何时发生按键”
-  - 作用：补齐从“持续监听传感器”到“自动切窗”的攻击链关键一环
+- 🟨【进行中】Step 5: onset detection + keyboard activity segmentation
+  - 当前已经有独立 [onset_detection/README.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README.md) 模块
+  - 当前 onset detector 第一轮结果：
+    - `AUC = 0.997`
+    - `F1 = 0.835`
+    - `Precision = 0.726`
+    - `Recall = 0.983`
+  - 当前方向不再只是“按键开始点”，还包括：
+    - keyboard activity `start / end` boundary
+    - `mixed2` 两分钟连续流协议
+    - `typing_1` free typing vs `typing_2` password-style typing
+    - `typing_2` 段接现有 password classifier
 - 🟥【待办】Step 6: `len=9 / len=10` password 扩展
   - 目标：验证长度增长后 top-k / top-N 的退化曲线
 - 🟥【待办】Step 7: 符号与大写扩展
@@ -249,31 +258,37 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 - `password only` 不差，但当前没有超过上面这条路线
 - `sentence` / 自然语言恢复保留，但暂不作为当前 headline
 - 当前结果已经足以支撑一个受控 password-style continuous-string 攻击故事
-- 自动 onset detection、更多长度、更多设备/更多用户，是下一阶段最值钱的扩展
+- onset detection 现在已经进入实现与训练阶段；下一阶段最值钱的是：
+  - `mixed2` activity segmentation / boundary evaluation
+  - 更多长度
+  - 更多设备 / 更多用户
 
 ## 8. 下一阶段待做
 
 1. `len=9 / len=10` password 扩展
 2. `! ? @` 等常见符号扩展
-3. continuous stream `onset detection`
+3. `mixed2` 连续流采集、activity segmentation 训练与 episode-level 评估
 4. cross-device / cross-user 采集
-5. `2` 分钟混合流 demo：自动识别键盘活动开始/结束，并在 password 段恢复输入内容
+5. `2` 分钟混合流 demo：自动识别键盘活动开始/结束，并在 `typing_2` 段恢复 password 内容
 
 ## 9. Onset Detection 设计思路
 
-当前 password 路线默认依赖已有键盘标签来切窗；真正的自动攻击链还需要补上：
+当前 password 路线默认依赖已有键盘标签来切窗；真正的自动攻击链现在已经开始补 onset 模块：
 
 - 在连续 IMU 数据流里，自动判断“什么时候发生了一次键盘敲击”
 - 进一步判断“一段键盘活动何时开始、何时结束”
 - 再把 password 风格那一段候选片段送给现有 password/key classifier
 
-当前建议把 onset detection 单独拆成两个相邻层次：
+当前 `onset_detection/` 模块把问题拆成两个相邻层次：
 
 1. `keyboard onset`
    - 目标：检测键盘敲击事件发生时刻
-2. `keyboard episode boundary`
+2. `keyboard activity segmentation`
    - 目标：判断一段键盘活动何时开始、何时结束
-   - MVP 可先用“检测到第一个稳定 onset 视为开始；长时间无新 onset 视为结束”的启发式实现
+   - 当前实现是：
+     - `ActivitySegmentCNN` 做 keyboard-active vs inactive
+     - threshold + merge 形成 episode
+   - `typing_1` / `typing_2` 的区分当前仍是 demo-protocol heuristic，不是独立学出的 style classifier
 3. `non-keyboard motion`
    - 目标：过滤常见干扰，如：
      - 静止不动
@@ -282,11 +297,15 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
      - 摇晃 / 搬动 Mac
      - 桌面轻碰 / 环境振动
 
-### 数据建议
+### 数据与协议
 
-- 正样本：
-  - 可以复用已有 `single_key` / `password` 采集里的键盘事件窗口，作为第一版正样本
-  - 但仍建议额外补少量“连续键盘输入流”数据，因为 onset detector 面对的是连续上下文，而不是孤立切好的窗口
+- onset point detection：
+  - 复用已有 `single_key` / `boost` / `password/len_8`
+  - 再配合 `idle / trackpad_move / trackpad_click / shake / desk_bump` 负样本
+- activity segmentation：
+  - `mixed2` 是 primary boundary source
+  - `single_key` / `password` 整段可作为 supplementary positives
+  - 但它们不提供真实 start/end boundary supervision
 - 负样本：
   - 需要单独采：
     - `idle`
@@ -297,7 +316,7 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 
 ### 当前推荐的 demo 协议
 
-当前不把“长时监控一小时”作为论文必需项，而是先做一个更可控、更容易写清楚的 `2` 分钟混合流验证：
+当前不把“长时监控一小时”作为论文必需项，而是先做一个更可控、更容易写清楚的 `2` 分钟 `mixed2` 混合流验证：
 
 - 在约 `120s` 连续流里安排多个非键盘扰动时段：
   - 静止
@@ -328,3 +347,9 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 - 两段键盘活动区间是否被正确分离
 - 下游影响：
   - 在 `typing_2` 段上，onset proposal 后再接 password classifier 的 top-k / top-N 变化
+  - 以及：
+    - `Full E2E`
+    - `GT-segment`
+    - `GT-aligned`
+    - `GT-onset baseline`
+    之间的退化差异
