@@ -222,18 +222,20 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
     - `sequence_top100 = 65.0%`
     - `CER = 26.6%`
   - 指标：`char top-1/top-3/top-5`、`sequence top-10/top-50/top-100`、`CER`
-- 🟨【进行中】Step 5: onset detection + keyboard activity segmentation
+- 🟨【进行中】Step 5: onset / password-boundary 模块
   - 当前已经有独立 [onset_detection/README.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README.md) 模块
-  - 当前 onset detector 第一轮结果：
+  - 原始 onset detector 第一轮结果：
     - `AUC = 0.997`
     - `F1 = 0.835`
     - `Precision = 0.726`
     - `Recall = 0.983`
-  - 当前方向不再只是“按键开始点”，还包括：
-    - keyboard activity `start / end` boundary
-    - `mixed2` 两分钟连续流协议
-    - `typing_1` free typing vs `typing_2` password-style typing
-    - `typing_2` 段接现有 password classifier
+  - 当前 onset 主任务已经从 generic activity recognition 收缩到：
+    - `password_boundary`
+    - 即：在 `mixed2` 连续流中精准切出真实 password episode
+  - 当前 `mixed2` 协议是约 `3` 分钟的结构化连续流：
+    - `idle -> trackpad_move -> typing_1 -> trackpad_click -> idle -> typing_2 -> shake`
+  - `typing_2` 段会接现有 onset detector + password classifier
+  - 当前 `e2e_full` 已经去掉 GT-assisted group alignment；`e2e_gt_aligned` 保留为显式 oracle baseline
 - 🟥【待办】Step 6: `len=9 / len=10` password 扩展
   - 目标：验证长度增长后 top-k / top-N 的退化曲线
 - 🟥【待办】Step 7: 符号与大写扩展
@@ -258,8 +260,8 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 - `password only` 不差，但当前没有超过上面这条路线
 - `sentence` / 自然语言恢复保留，但暂不作为当前 headline
 - 当前结果已经足以支撑一个受控 password-style continuous-string 攻击故事
-- onset detection 现在已经进入实现与训练阶段；下一阶段最值钱的是：
-  - `mixed2` activity segmentation / boundary evaluation
+- onset 现在已经进入实现与训练阶段；下一阶段最值钱的是：
+  - `mixed2` 上的 `password_boundary` 训练与 boundary evaluation
   - 更多长度
   - 更多设备 / 更多用户
 
@@ -267,89 +269,76 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 
 1. `len=9 / len=10` password 扩展
 2. `! ? @` 等常见符号扩展
-3. `mixed2` 连续流采集、activity segmentation 训练与 episode-level 评估
+3. `mixed2` 连续流采集、`password_boundary` 训练与 episode-level 评估
 4. cross-device / cross-user 采集
 5. `2` 分钟混合流 demo：自动识别键盘活动开始/结束，并在 `typing_2` 段恢复 password 内容
 
-## 9. Onset Detection 设计思路
+## 9. Onset / Password-Boundary 设计思路
 
-当前 password 路线默认依赖已有键盘标签来切窗；真正的自动攻击链现在已经开始补 onset 模块：
+当前 password 路线默认依赖已有键盘标签切窗；真正的自动攻击链现在已经开始补 onset 模块。
+但现在的核心目标已经不是 generic keyboard activity recognition，而是：
 
-- 在连续 IMU 数据流里，自动判断“什么时候发生了一次键盘敲击”
-- 进一步判断“一段键盘活动何时开始、何时结束”
-- 再把 password 风格那一段候选片段送给现有 password/key classifier
+**在连续 IMU 流中尽量精准地切出真实 password episode。**
 
-当前 `onset_detection/` 模块把问题拆成两个相邻层次：
+也就是：
+- `password_start` 更靠近第一个 password keystroke
+- `password_end` 更靠近最后一个 password keystroke
+- 内部允许短暂停顿
+- 切出的 episode 再送给现有 onset detector + password classifier
 
-1. `keyboard onset`
-   - 目标：检测键盘敲击事件发生时刻
-2. `keyboard activity segmentation`
-   - 目标：判断一段键盘活动何时开始、何时结束
-   - 当前实现是：
-     - `ActivitySegmentCNN` 做 keyboard-active vs inactive
-     - threshold + merge 形成 episode
-   - `typing_1` / `typing_2` 的区分当前仍是 demo-protocol heuristic，不是独立学出的 style classifier
-3. `non-keyboard motion`
-   - 目标：过滤常见干扰，如：
-     - 静止不动
-     - 滑动触控板
-     - 敲击触控板
-     - 摇晃 / 搬动 Mac
-     - 桌面轻碰 / 环境振动
+当前 `onset_detection/` 模块分成两层：
 
-### 数据与协议
+1. `password_boundary`
+   - 主任务
+   - 4 类：
+     - `non_password`
+     - `password_start`
+     - `password_active`
+     - `password_end`
+   - 主要监督来源：
+     - `mixed2` 连续流
+     - `events.csv` 收紧后的 refined password episode
 
-- onset point detection：
-  - 复用已有 `single_key` / `boost` / `password/len_8`
-  - 再配合 `idle / trackpad_move / trackpad_click / shake / desk_bump` 负样本
-- activity segmentation：
-  - `mixed2` 是 primary boundary source
-  - `single_key` / `password` 整段可作为 supplementary positives
-  - 但它们不提供真实 start/end boundary supervision
-- 负样本：
-  - 需要单独采：
-    - `idle`
-    - `trackpad_move`
-    - `trackpad_tap/click`
-    - `shake`
-    - `desk_bump` / `lift_and_put_down`
+2. `keyboard onset`
+   - 辅助任务
+   - 用于在已经切出的 password episode 内定位单个按键时刻
 
-### 当前推荐的 demo 协议
+### 当前 mixed2 demo 协议
 
-当前不把“长时监控一小时”作为论文必需项，而是先做一个更可控、更容易写清楚的 `2` 分钟 `mixed2` 混合流验证：
+当前不把“长时监控 1 小时”作为论文必需项，而是先做一个更可控的约 `3` 分钟 `mixed2` demo：
 
-- 在约 `120s` 连续流里安排多个非键盘扰动时段：
-  - 静止
-  - 触控板滑动
-  - 触控板敲击
-  - 晃动 / 桌面轻碰
-- 再安排两个键盘活动时段：
-  - `typing_1`：自由乱打字 / free typing
-  - `typing_2`：符合当前 password 协议的慢速 password-style 输入
+- `idle`
+- `trackpad_move`
+- `typing_1`（free typing）
+- `trackpad_click`
+- `idle`
+- `typing_2`（password-style）
+- `shake`
 
-当前目标不是恢复自由文本内容，而是证明：
+当前目标不是恢复自由文本，而是证明：
 
-1. 在这 `2` 分钟里，系统能分辨哪些时段不是键盘
-2. 能找出哪一段开始敲键盘、哪一段结束敲键盘
-3. 能区分：
-   - `typing_1`：自由敲击段
-   - `typing_2`：password 风格输入段
-4. 对 `typing_2` 这段，再接现有 password classifier 恢复输入内容
+1. 连续流里能把真实 password episode 边界切出来
+2. 不会把前后的 free typing / 干扰动作大量混进 password 段
+3. 在切出的 `typing_2` / password episode 上，现有 password classifier 还能恢复内容
 
-这比“长时监控 demo”更适合作为当前论文版的可行性证明。
+### 当前最关键指标
 
-### 推荐指标
-
-- onset `precision / recall / F1`
-- 平均时间偏差（预测时刻和真实按键时刻的距离）
-- `false alarms per minute/hour`
-- keyboard activity start / end boundary 误差
-- 两段键盘活动区间是否被正确分离
-- 下游影响：
-  - 在 `typing_2` 段上，onset proposal 后再接 password classifier 的 top-k / top-N 变化
+- `password_boundary` 的 segment-level：
+  - `macro_f1`
+  - `weighted_f1`
+  - per-class `P/R/F1`
+- episode-level：
+  - `episode_precision / recall`
+  - `mean_iou`
+  - `mean_start_error_ms`
+  - `mean_end_error_ms`
+- Path B 下游影响：
+  - `char_top1/top3/top5`
+  - `sequence_top10/top50/top100`
+  - `CER`
   - 以及：
-    - `Full E2E`
-    - `GT-segment`
-    - `GT-aligned`
-    - `GT-onset baseline`
+    - `e2e_full`
+    - `e2e_gt_seg`
+    - `e2e_gt_aligned`
+    - `gt_baseline`
     之间的退化差异

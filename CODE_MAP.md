@@ -57,42 +57,49 @@ These files define the active password-route story.
   - event-aligned window extraction + resampling
   - current default target rate remains `190 Hz`
 
-### Onset / activity segmentation
+### Onset / password-boundary
 
 - [onset_detection/onset_collector.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/onset_collector.py)
   - onset-specific collector
   - supports:
     - negative nuisance motions
     - `mixed`
-    - structured `mixed2` 2-minute protocol
+    - structured `mixed2` ~3-minute protocol
+  - current practical order:
+    - `idle -> trackpad_move -> typing_1 -> trackpad_click -> idle -> typing_2 -> shake`
 
 - [onset_detection/onset_preprocessor.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/onset_preprocessor.py)
   - builds both:
     - onset point-detection datasets
-    - activity segmentation datasets
+    - `password_boundary` datasets
+  - current mainline is `--task password_boundary`
 
 - [onset_detection/onset_model.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/onset_model.py)
   - contains:
     - `OnsetCNN`
     - `OnsetCNNLarge`
-    - `ActivitySegmentCNN`
+    - `PasswordBoundaryCNN`
 
 - [onset_detection/train_onset.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/train_onset.py)
   - trains:
     - `--task onset`
-    - `--task activity`
+    - `--task password_boundary`
+    - legacy `--task activity`
 
 - [onset_detection/eval_onset.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/eval_onset.py)
-  - segment-level / event-level / episode-level evaluation
+  - segment-level / mixed2 episode-level evaluation
+  - current main use:
+    - `password_boundary` boundary metrics
 
 - [onset_detection/eval_onset_e2e.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/eval_onset_e2e.py)
   - end-to-end Path A / Path B evaluation
   - current Path B logic:
-    - activity segmentation
-    - `typing_1` / `typing_2` heuristic separation
+    - `password_boundary` segmentation
     - onset detection
     - gap-based password grouping
     - classifier recovery
+  - `e2e_full` / `e2e_gt_seg` no longer use GT-assisted group alignment
+  - `e2e_gt_aligned` remains the explicit oracle baseline
 
 - [phase3_password_inception/run_password_closure_inception.py](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/run_password_closure_inception.py)
   - current zero-shot password-route script
@@ -148,8 +155,8 @@ These files define the active password-route story.
     - `shake`
 
 - `data/raw/onset_mixed2`
-  - intended structured 2-minute mixed-stream collection directory
-  - used for activity boundary supervision and Path B evaluation
+  - current structured ~3-minute mixed-stream collection directory
+  - primary source for password episode boundary supervision and Path B evaluation
 
 - [data/processed/merged_dataset.npz](/Users/shiyi/备份（mac_vs专用）/data/processed/merged_dataset.npz)
   - main baseline training set
@@ -160,7 +167,10 @@ These files define the active password-route story.
   - onset point-detection dataset
 
 - `data/processed/activity_dataset.npz`
-  - keyboard activity segmentation dataset
+  - legacy keyboard activity segmentation dataset
+
+- `data/processed/password_boundary_dataset.npz`
+  - current main dataset for password-centric boundary segmentation
 
 ## 3. Current Main Docs
 
@@ -186,7 +196,7 @@ These files define the active password-route story.
   - current `len=8` result summary
 
 - [onset_detection/README.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README.md)
-  - current onset / activity segmentation module doc
+  - current onset / password-boundary module doc
 
 ## 4. Legacy / Secondary Files
 
@@ -222,13 +232,13 @@ These files still matter, but are not the current password-mainline entrypoint.
 4. treat `single_key + boost` as the baseline training source unless explicitly
    testing `password only`
 5. treat `password/len_8` as the current main continuous-input benchmark
-6. treat `mixed2` as the current paper-oriented onset/activity demo protocol
+6. treat `mixed2` as the current paper-oriented password-boundary demo protocol
 
 ## 6. Near-Term Planned Experiments
 
 1. collect `mixed2` streams
-2. train / evaluate `ActivitySegmentCNN`
+2. train / evaluate `PasswordBoundaryCNN`
 3. run Path B:
-   - `activity segment -> typing_2 -> onset -> gap-group -> classify`
+   - `password_boundary -> onset -> gap-group -> classify`
 4. extend password route to `len=9 / len=10`
 5. only after protocol stability is established, revisit model comparison

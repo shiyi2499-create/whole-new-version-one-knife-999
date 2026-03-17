@@ -1,282 +1,332 @@
-# Onset Detection & Keyboard Activity Segmentation Module
+# onset_detection
 
-Keystroke onset detection **and keyboard activity boundary segmentation** for
-the Apple Internal IMU side-channel attack.
+这个模块当前的主目标是：
 
-This module handles the two critical "where" questions in the attack chain:
+**从 `mixed2` 连续流里尽量精准地找出真实 password episode 的开始和结束，**
+然后把这一段送入：
 
-1. **Activity Segmentation**: In a continuous mixed stream, *where* does
-   keyboard activity start and end? Which episode is free typing vs
-   password-style typing?
-2. **Onset Detection**: Within a keyboard episode, *when* does each
-   individual keystroke occur?
+`password_boundary -> onset detector -> grouping -> password classifier`
 
-The segmentation output feeds directly into the existing password classifier:
-only the `typing_2` (password-style) episodes are passed downstream.
+也就是说，主线已经从 generic mixed activity recognition 收缩成：
+**password-centric boundary segmentation**。
 
-## Architecture Overview
+---
 
-```
-continuous IMU stream (~2 min mixed)
-  │
-  ├─ Activity Segmenter (ActivitySegmentCNN)
-  │     ├─ frame-level keyboard-active probability curve
-  │     ├─ threshold + merge → Episode boundaries
-  │     └─ typing_1/typing_2 classification (demo-protocol heuristic*)
-  │
-  └─ Onset Detector (OnsetCNN)
-        ├─ within typing_2 episode(s) only
-        ├─ peak detection + NMS → onset timestamps
-        ├─ gap-based grouping → per-password onset groups
-        └─ cut 300ms windows → password classifier → top-k recovery
+## 当前支持的任务
 
-* typing_1 vs typing_2 uses median IKI + keystroke rate thresholds,
-  not a learned classifier.  See classify_episodes_by_density() docs.
-```
+### 1. `task=onset`
+原始二分类按键起点检测：
+- 输入：滑窗 IMU
+- 标签：`non_onset / onset`
+- 输出：后续 password classifier 使用的单击键 onset
 
-## Two Attack Paths
+### 2. `task=password_boundary`（当前主任务）
+4 类 password 边界检测：
+- `non_password`
+- `password_start`
+- `password_active`
+- `password_end`
 
-### Path A: Password session (original)
-```
-password session → onset detect → classifier → top-k
-```
+它的目标不是把各种 activity 分得很细，而是：
+- 在 `mixed2` 连续流里提取 **真实 password activity episode**
+- `password_start` 更靠近第一个 password keystroke，而不是 protocol `typing_2` block 的开始
+- `password_end` 更靠近最后一个 password keystroke，而不是 protocol `typing_2` block 的结束
+- episode 内允许短暂停顿，不因为短 silence 立刻截断
+- 最终服务 Path B 的密码恢复
 
-### Path B: Mixed2 stream (new, paper demo target)
-```
-~2 min mixed stream
-  → activity segment → find typing_2 episode
-  → onset detect within typing_2
-  → gap-based password grouping (no GT)
-  → classifier → password recovery
-```
+### 3. `task=activity`
+保留旧的 keyboard-active 二分类，仅作兼容，不再是主推荐路线。
 
-## File Map
+---
 
-| File | Role |
-|------|------|
-| `onset_utils.py` | Peak detection, NMS, event matching, **episode metrics (IoU, boundary error, separation)** |
-| `onset_model.py` | OnsetCNN + OnsetCNNLarge + **ActivitySegmentCNN** + energy baseline |
-| `onset_preprocessor.py` | Sliding-window dataset builder for **both onset and activity tasks** |
-| `onset_dataset.py` | PyTorch Dataset + session-level splitting (supports activity_labels) |
-| `train_onset.py` | Training script with **`--task onset` / `--task activity`** modes |
-| `onset_collector.py` | Negative + mixed + **mixed2** (structured 2-min protocol) collection |
-| `eval_onset.py` | Segment-level + event-level + **episode boundary evaluation** |
-| `eval_onset_e2e.py` | Full chain: **Path A** (onset→classify) + **Path B** (segment→typing_2→classify) |
+## mixed2 协议（当前实际版本）
 
-## Quick Start
+当前 `onset_collector.py --mode mixed2` 使用的是约 3 分钟的结构化协议：
 
-### Step 1: Collect structured 2-minute mixed streams
+| 阶段 | 活动 | 时长 | 标签 |
+|---|---|---:|---|
+| 1 | idle | 12s | `idle_1` |
+| 2 | trackpad_move | 18s | `trackpad_move_1` |
+| 3 | keyboard free typing | 35s | `typing_1` |
+| 4 | trackpad_click | 18s | `trackpad_click_1` |
+| 5 | idle | 12s | `idle_2` |
+| 6 | keyboard password typing | 60s | `typing_2` |
+| 7 | shake | 12s | `shake_1` |
 
-```bash
-python3 onset_detection/onset_collector.py --mode mixed2 --n-trials 5
-```
+逻辑上是：
+- 前半段提供 non-password 干扰和 free typing 背景
+- `typing_2` 前专门留一个静止段，帮助后续切出更干净的 password start
+- `shake` 放在最后，作为收尾干扰，而不是直接接在 password 前面
 
-This records the protocol:
-idle → trackpad_move → typing_1 (free) → trackpad_click → shake →
-typing_2 (password) → desk_bump → idle
+在 `typing_2` 阶段，采集器会明确显示当前轮要输入的 8 位 `a-z0-9` password 列表，并要求：
+- 慢速输入
+- 每条输完按一次 `Enter`
 
-Each trial produces:
-- `*_sensor.csv` – continuous IMU data
-- `*_events.csv` – keyboard events with timestamps
-- `*_activity_log.csv` – ground-truth segment boundaries with labels
-- `*_protocol.json` – full protocol definition
+---
 
-### Step 2: Build activity segmentation dataset
+## 数据来源角色
+
+### mixed2
+`mixed2` 是 `password_boundary` 的**主监督来源**：
+- 提供真实连续流背景
+- 提供 coarse `typing_2` block
+- 再结合 `events.csv`，把 coarse block 收紧成 refined password episode：
+  - `start ≈ first password key + 少量 pre-roll`
+  - `end ≈ last password key + 少量 post-roll`
+- 提供 non-password 干扰背景
+
+### password session (`free_type` / `password/len_8`)
+作为**补充 `password_active` 正样本**：
+- 整段 session 视为 `password_active`
+- **不**从 session 首尾造 synthetic `password_start / password_end`
+- 避免伪边界污染真实边界学习
+
+### single_key / boost / 其它 keyboard session
+作为**hard non-password background**：
+- 它们包含键盘动作
+- 但不是目标 password episode
+- 全部记作 `non_password`
+
+### onset negatives
+如：
+- `idle`
+- `trackpad_move`
+- `trackpad_click`
+- `shake`
+
+这些都作为普通 `non_password` 背景。
+
+---
+
+## 关键文件
+
+| 文件 | 作用 |
+|---|---|
+| `onset_collector.py` | 采集 `negative / mixed / mixed2` |
+| `onset_preprocessor.py` | 构建 `password_boundary_dataset.npz` / `onset_dataset.npz` |
+| `onset_model.py` | `PasswordBoundaryCNN` + 原 onset 模型 |
+| `onset_dataset.py` | binary / multiclass dataset + sampler |
+| `train_onset.py` | 训练 `password_boundary` / `onset` |
+| `onset_utils.py` | episode 解码、gap bridging、matching、grouping |
+| `eval_onset.py` | segment-level 多类评估 + mixed2 episode boundary 评估 |
+| `eval_onset_e2e.py` | Path A / Path B 端到端评估 |
+
+---
+
+## 训练链路
+
+### Step 1: 构建 `password_boundary` 数据集
 
 ```bash
 python3 onset_detection/onset_preprocessor.py \
-  --task activity \
+  --task password_boundary \
+  --project-root . \
   --mixed2-dirs data/raw/onset_mixed2 \
   --keyboard-dirs data/raw/single_key data/raw/boost \
+  --password-dirs data/raw/password/len_8 \
   --negative-dirs data/raw/onset_negative \
-  --output data/processed/activity_dataset.npz
+  --output data/processed/password_boundary_dataset.npz
 ```
 
-**Data source roles for activity segmentation:**
-- `--mixed2-dirs`: **primary source** — provides real activity transition
-  boundaries from `activity_log.csv`.  The model learns where keyboard
-  activity starts and ends relative to idle/trackpad/shake.
-- `--keyboard-dirs`: **supplementary positives** — entire sessions are
-  labelled keyboard-active.  Adds positive-class IMU diversity but does
-  NOT contribute real start/end boundary supervision (boundaries are the
-  session edges, not ecological activity transitions).
-- `--negative-dirs`: inactive-class samples, no boundary information.
+默认会把 `mixed2` 中 coarse `typing_2` block 结合 `events.csv` 收紧成 refined password episode，再生成 4 类标签：
+- `password_start`
+- `password_active`
+- `password_end`
+- 其余全部 `non_password`
 
-### Step 3: Train activity segmenter
+当前关键默认参数：
+- `window_ms = 500`
+- `stride_ms = 40`
+- `label_radius_ms = 120`
+- `pre_key_ms = 120`
+- `post_key_ms = 220`
+- `transition_exclusion_ms = 240`
+
+其中 `transition_exclusion_ms` 的作用是：
+- 把 refined 边界附近最模糊的 transition shell 剔除
+- 避免把 protocol block 边缘硬压成真边界监督
+
+### Step 2: 训练 `password_boundary` 模型
 
 ```bash
 python3 onset_detection/train_onset.py \
-  --task activity \
-  --dataset data/processed/activity_dataset.npz \
-  --epochs 80
+  --task password_boundary \
+  --project-root . \
+  --dataset data/processed/password_boundary_dataset.npz \
+  --model password_boundary_cnn \
+  --checkpoint results/password_boundary_detector.pt \
+  --scaler results/password_boundary_scaler.npz \
+  --report results/password_boundary_training_report.json \
+  --device cuda
 ```
 
-Automatically selects `ActivitySegmentCNN` and saves to
-`results/activity_detector.pt` + `results/activity_scaler.npz`.
+### Step 3: `password_boundary` 的 segment-level 多类评估
 
-### Step 4: Build onset detection dataset (unchanged)
+```bash
+python3 onset_detection/eval_onset.py \
+  --task password_boundary \
+  --project-root . \
+  --checkpoint results/password_boundary_detector.pt \
+  --scaler results/password_boundary_scaler.npz \
+  --dataset data/processed/password_boundary_dataset.npz \
+  --report results/password_boundary_eval_report.json \
+  --device cuda
+```
+
+会输出：
+- `macro_f1`
+- `weighted_f1`
+- `accuracy`
+- 每个类别的 `P / R / F1`
+
+### Step 4: mixed2 上做 password episode 边界评估
+
+```bash
+python3 onset_detection/eval_onset.py \
+  --task password_boundary \
+  --project-root . \
+  --checkpoint results/password_boundary_detector.pt \
+  --scaler results/password_boundary_scaler.npz \
+  --mixed2-dirs data/raw/onset_mixed2 \
+  --report results/password_boundary_mixed2_report.json \
+  --device cuda
+```
+
+会输出：
+- `episode_precision`
+- `episode_recall`
+- `mean_iou`
+- `mean_start_error_ms`
+- `mean_end_error_ms`
+
+注意这里的 GT 不再是 coarse `typing_2` block 首尾，
+而是 `events.csv` 收紧后的 refined password episode 首尾。
+
+---
+
+## Path B：predicted boundary -> onset -> classifier
+
+### 先训练 onset detector（原链路保留）
 
 ```bash
 python3 onset_detection/onset_preprocessor.py \
+  --task onset \
+  --project-root . \
   --keyboard-dirs data/raw/single_key data/raw/boost \
   --password-dirs data/raw/password/len_8 \
   --negative-dirs data/raw/onset_negative \
   --output data/processed/onset_dataset.npz
-```
 
-### Step 5: Train onset detector (unchanged)
-
-```bash
 python3 onset_detection/train_onset.py \
+  --task onset \
+  --project-root . \
   --dataset data/processed/onset_dataset.npz \
   --checkpoint results/onset_detector.pt \
   --scaler results/onset_scaler.npz \
-  --epochs 80
+  --report results/onset_training_report.json \
+  --device cuda
 ```
 
-### Step 6: Evaluate activity segmentation
-
-```bash
-# Episode boundary metrics on mixed2 streams
-python3 onset_detection/eval_onset.py \
-  --task activity \
-  --mixed2-dirs data/raw/onset_mixed2
-
-# Joint evaluation (both onset + activity)
-python3 onset_detection/eval_onset.py \
-  --task both \
-  --checkpoint results/onset_detector.pt \
-  --scaler results/onset_scaler.npz \
-  --activity-checkpoint results/activity_detector.pt \
-  --activity-scaler results/activity_scaler.npz \
-  --mixed2-dirs data/raw/onset_mixed2
-```
-
-### Step 7: Full E2E attack chain on mixed2 streams
+### 再跑 end-to-end Path B
 
 ```bash
 python3 onset_detection/eval_onset_e2e.py \
+  --project-root . \
   --onset-checkpoint results/onset_detector.pt \
   --onset-scaler results/onset_scaler.npz \
-  --activity-checkpoint results/activity_detector.pt \
-  --activity-scaler results/activity_scaler.npz \
+  --boundary-checkpoint results/password_boundary_detector.pt \
+  --boundary-scaler results/password_boundary_scaler.npz \
   --classifier-checkpoint results/inception_password_final.pt \
   --classifier-scaler results/inception_password_scaler.npz \
-  --mixed2-dirs data/raw/onset_mixed2
+  --mixed2-dirs data/raw/onset_mixed2 \
+  --report results/onset_e2e_report.json \
+  --device cuda
 ```
 
-This runs **both** Path A (password sessions) and Path B (mixed2 streams)
-and reports four comparison baselines for Path B:
+Path B 现在走的是：
 
-1. **Full E2E**: activity segment → typing_2 → onset → gap-based grouping → classify
-   (zero GT information)
-2. **GT-segment**: GT typing_2 boundary → onset → gap-based grouping → classify
-   (GT boundary only)
-3. **GT-aligned**: GT boundary → onset → GT-onset-assisted per-password alignment → classify
-   (GT boundary + GT onset timing — explicit oracle baseline)
-4. **GT-onset baseline**: GT onset times → classify (full oracle)
+```text
+mixed2 stream
+  -> password_boundary detector
+  -> predicted refined password episode
+  -> onset detector inside predicted episode
+  -> per-episode grouping (允许内部短 gap)
+  -> existing password classifier
+  -> top-k / sequence_topN / CER
+```
 
-This decomposition isolates degradation sources:
-- Full E2E − GT baseline = total pipeline degradation
-- GT-segment − GT baseline = onset detection + grouping error (segmentation removed)
-- GT-aligned − GT baseline = onset detection error only (grouping also removed)
+评估会同时给四组结果：
+- `e2e_full`
+- `e2e_gt_seg`
+- `e2e_gt_aligned`（显式 oracle baseline，允许 GT-assisted grouping）
+- `gt_baseline`
 
-## Mixed2 Protocol Design
+其中：
+- `e2e_full` 和 `e2e_gt_seg` **不再依赖 GT password group 对齐**
+- 如果预测 episode 数量和 GT 不一致，评估时只按时间顺序逐个对应，不做 GT-assisted 重排
+- `e2e_gt_aligned` 是故意保留的 oracle 对照线
 
-The `--mode mixed2` collector implements a fixed ~2-minute protocol:
+---
 
-| Segment | Activity | Duration | Label |
-|---------|----------|----------|-------|
-| 1 | idle | 10s | idle_1 |
-| 2 | trackpad_move | 12s | trackpad_move_1 |
-| 3 | **keyboard (free)** | 20s | **typing_1** |
-| 4 | trackpad_click | 10s | trackpad_click_1 |
-| 5 | shake | 8s | shake_1 |
-| 6 | **keyboard (password)** | 25s | **typing_2** |
-| 7 | desk_bump | 8s | desk_bump_1 |
-| 8 | idle | 10s | idle_2 |
+## 设计说明
 
-The two keyboard segments differ in:
-- **typing_1**: free typing (faster, varied content)
-- **typing_2**: controlled password typing (8-char a-z0-9, slower IKI)
+### 为什么不用 generic mixed activity 多分类
+真正影响 password 恢复质量的不是“这是不是 keyboard activity”，而是：
+- password episode 是否被完整截住
+- `start` 是否足够贴近首个 password 字符真正开始的地方
+- `end` 是否足够贴近最后一个 password 字符真正结束的地方
+- 内部短暂停顿会不会被误切成 episode 结束
+- 会不会把前后的 free typing 或干扰动作混进 password 段
 
-This protocol supports the paper claim: the system can distinguish and
-correctly segment the password-typing episode from a realistic mixed stream.
+所以当前主任务直接学：
+- `start`
+- `active`
+- `end`
+- `non_password`
 
-## Metrics Reported
+比继续堆 generic activity label 更贴近最终目标。
 
-### Segment-level (held-out windows)
-- AUC-ROC, Precision, Recall, F1, Accuracy
-- For both onset and activity tasks
+### 为什么 password session 不造 start / end 标签
+因为 session 边界不是生态真实边界。
+如果强行把 session 首尾当成 `password_start / password_end`，会把模型往错误监督上带偏。
 
-### Event-level (continuous streams)
-- Event Precision / Recall / F1 at ±50ms tolerance
-- Timing error (mean, median, std) in milliseconds
-- False alarms per minute
-- Tolerance sweep at ±25 / 50 / 75 / 100 ms
+所以 password session 只补 `password_active`；
+真正的边界监督主要来自：
+- `mixed2`
+- `events.csv` 收紧后的 refined episode
 
-### Episode boundary metrics (NEW)
-1. **Start boundary error** (ms): |predicted_start − GT_start|
-2. **End boundary error** (ms): |predicted_end − GT_end|
-3. **Episode IoU**: temporal intersection-over-union
-4. **2-episode separation**: whether typing_1 and typing_2 are
-   correctly identified as distinct episodes
-5. **Separation accuracy**: fraction of streams where separation succeeds
+### 为什么 single_key / boost 当 non-password
+因为这些数据很像“会误触发 onset，但不该进入 password classifier 的背景”。
+把它们当 hard non-password background，更符合当前主目标。
 
-### End-to-end (onset → classifier)
-- char_top1 / top3 / top5
-- sequence_top10 / top50 / top100
-- CER
-- Δ degradation tables: Full E2E / GT-segment / GT-aligned / GT-onset
-- Missed characters (onset FN) and extra characters (onset FP) (Path A)
+### 当前真实边界定义
+这里明确区分两层：
+- **protocol block boundary**：activity log 里粗粒度的 `typing_2` 区间
+- **real password activity episode boundary**：更贴近真实恢复目标的 refined 首尾边界
 
-## Design Decisions
+当前 refined 逻辑是：
+1. 在 mixed2 的 `typing_2` block 内找到 press 事件
+2. `password_start` 锚到 **第一个 password press 前的小段 pre-roll**
+3. `password_end` 锚到 **最后一个 password press 后的小段 post-roll**
+4. refined 边界附近最模糊的 shell 直接剔除
+5. 解码阶段允许 episode 内部存在短 gap；只有持续 non-password 证据才更容易触发结束
 
-1. **Two-stage pipeline** (activity segmenter + onset detector):
-   More robust than a single model trying to do both. The activity
-   segmenter sees wider context (400ms windows) while the onset
-   detector uses precise 150ms windows.
+所以这个任务学的不是“整个 typing_2 block”，而是更接近：
+- 第一个 password 字符真正开始的地方
+- 最后一个 password 字符真正结束的地方
+- 中间允许短暂停顿的完整 password episode
 
-2. **Episode typing style classification — demo-protocol heuristic**:
-   `classify_episodes_by_density()` uses two hand-tuned features:
-   median IKI > 0.6s and keystroke rate < 2.5 Hz.
-   **This is NOT a learned classifier.** It is designed specifically for
-   the structured 2-minute mixed2 protocol where typing_1 is continuous
-   free text and typing_2 is slow 8-char password entry.  It will not
-   generalise to arbitrary typing tasks without re-tuning or replacement
-   with a learned episode-level classifier.
+---
 
-3. **ActivitySegmentCNN uses wider kernels** (k=9,7,5,3):
-   Needs to capture sustained multi-keystroke energy patterns,
-   not just single transients.
+## 当前定位
 
-4. **Four-way comparison in Path B E2E**:
-   Full E2E / GT-segment / GT-aligned / GT-onset baselines.
-   Full E2E uses NO ground-truth information — per-password grouping
-   is done via gap-based splitting of predicted onsets.
-   GT-aligned is the explicit oracle baseline that uses GT onset times
-   for per-password alignment, kept separate to avoid contaminating
-   the full E2E numbers.
+这套模块现在已经是：
+- **可训练**
+- **可评估**
+- **可接现有 password classifier 推进 Path B**
 
-5. **Gap-based per-password grouping**:
-   Within a predicted typing_2 episode, detected onsets are split into
-   N groups (N = number of passwords from protocol) by finding the
-   (N−1) largest inter-onset gaps.  This is a reasonable heuristic
-   for the demo protocol where passwords are separated by deliberate
-   pauses (Enter key + prompt reading).
+但也要诚实地说：
+- `e2e_gt_aligned` 仍然是 oracle baseline
+- `typing_1 / typing_2` 的 style 区分目前主要还是协议内启发式，不是完全 learned classifier
 
-6. **Activity dataset: mixed2 as primary boundary source**:
-   mixed2 sessions provide real activity-transition boundaries.
-   single_key/password sessions are supplementary positives that add
-   intra-episode IMU diversity but do NOT provide ecologically valid
-   start/end boundary supervision.
-
-7. **Backward compatibility**: All original onset detection functionality
-   is preserved. Path A works exactly as before.
-
-## Integration Notes
-
-- **Zero modification** to existing main-line code
-- Reuses `sensor_reader.py`, `spu_backend.py`, `keyboard_listener.py` via import
-- Loads password classifier checkpoint without modification
-- All onset-specific code lives in the `onset_detection/` directory
+这不影响当前推进 mixed2 / password_boundary 训练与评估。

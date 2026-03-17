@@ -6,9 +6,9 @@ Collect negative-sample and mixed-stream sessions for onset detection.
 Three modes:
   1. negative  – Record a single activity type (idle, trackpad_move, etc.)
   2. mixed     – Record a scripted sequence of random interleaved activities
-  3. mixed2    – Record the structured 2-minute protocol:
+  3. mixed2    – Record the structured ~3-minute protocol:
                  idle → trackpad_move → typing_1 (free) → trackpad_click →
-                 shake → typing_2 (password) → desk_bump → idle
+                 idle → typing_2 (password) → shake
                  with explicit segment boundaries and labels
 
 Reuses the existing sensor_reader / spu_backend / keyboard_listener stack.
@@ -360,28 +360,42 @@ def run_mixed_mode(
 
 
 # ══════════════════════════════════════════════════════════════
-# Mixed2 mode: structured 2-minute protocol
+# Mixed2 mode: structured ~3-minute protocol
 # ══════════════════════════════════════════════════════════════
 
-# Default protocol: 8 segments, ~120s total
-# Segment labels are used as ground-truth for activity segmentation.
+# Default protocol: 7 segments, ~167s total
+# Segment labels are used as ground-truth for mixed-stream boundary supervision.
 # typing_1 = free typing (random text, faster)
 # typing_2 = password-style typing (8-char, slower, controlled)
 
 DEFAULT_MIXED2_PROTOCOL = [
-    {"activity": "idle",            "duration_s": 10.0, "label": "idle_1"},
-    {"activity": "trackpad_move",   "duration_s": 12.0, "label": "trackpad_move_1"},
-    {"activity": "keyboard",        "duration_s": 20.0, "label": "typing_1",
+    {"activity": "idle",            "duration_s": 12.0, "label": "idle_1"},
+    {"activity": "trackpad_move",   "duration_s": 18.0, "label": "trackpad_move_1"},
+    {"activity": "keyboard",        "duration_s": 35.0, "label": "typing_1",
      "typing_style": "free",
      "prompt_instructions": "Type whatever you want – random words, sentences, etc."},
-    {"activity": "trackpad_click",  "duration_s": 10.0, "label": "trackpad_click_1"},
-    {"activity": "shake",           "duration_s":  8.0, "label": "shake_1"},
-    {"activity": "keyboard",        "duration_s": 25.0, "label": "typing_2",
+    {"activity": "trackpad_click",  "duration_s": 18.0, "label": "trackpad_click_1"},
+    {"activity": "idle",            "duration_s": 12.0, "label": "idle_2"},
+    {"activity": "keyboard",        "duration_s": 60.0, "label": "typing_2",
      "typing_style": "password",
      "prompt_instructions": ""},  # filled with actual password prompts
-    {"activity": "desk_bump",       "duration_s":  8.0, "label": "desk_bump_1"},
-    {"activity": "idle",            "duration_s": 10.0, "label": "idle_2"},
+    {"activity": "shake",           "duration_s": 12.0, "label": "shake_1"},
 ]
+
+DISPLAY_LABELS_ZH = {
+    "idle_1": "静止阶段 1",
+    "idle_2": "密码前静止阶段",
+    "trackpad_move_1": "触控板滑动阶段",
+    "trackpad_click_1": "触控板点击阶段",
+    "shake_1": "整机晃动收尾阶段",
+    "typing_1": "自由敲击阶段",
+    "typing_2": "密码输入阶段",
+}
+
+TYPING_STYLE_ZH = {
+    "free": "自由敲击",
+    "password": "密码输入",
+}
 
 
 def generate_mixed2_protocol(
@@ -389,7 +403,7 @@ def generate_mixed2_protocol(
     seed: int = 42,
 ) -> list[dict]:
     """
-    Generate the structured 2-minute mixed-stream protocol.
+    Generate the structured ~3-minute mixed-stream protocol.
     The typing_2 segment gets n_passwords random 8-char password prompts.
     """
     rng = random.Random(seed)
@@ -402,7 +416,7 @@ def generate_mixed2_protocol(
             passwords = ["".join(rng.choices(chars, k=8)) for _ in range(n_passwords)]
             entry["prompts"] = passwords
             entry["prompt_instructions"] = (
-                f"Type each password slowly and carefully, press Enter between each:\n"
+                f"请慢速、仔细地输入下面每一条密码；每输入完一条后按一次 Enter：\n"
                 + "\n".join(f"  {i+1}. {pw}" for i, pw in enumerate(passwords))
             )
         protocol.append(entry)
@@ -418,7 +432,7 @@ def run_mixed2_mode(
     seed: int = 42,
 ):
     """
-    Record the structured 2-minute mixed-stream protocol.
+    Record the structured ~3-minute mixed-stream protocol.
 
     Each trial produces:
       - <session_id>_sensor.csv
@@ -435,13 +449,13 @@ def run_mixed2_mode(
     keyboard.start()
 
     print(f"\n{'='*60}")
-    print(f"  STRUCTURED 2-MINUTE MIXED-STREAM COLLECTION")
-    print(f"  Trials:     {n_trials}")
-    print(f"  Passwords:  {n_passwords} per trial")
-    print(f"  Output:     {output_dir}")
+    print(f"  结构化约 3 分钟混合流采集")
+    print(f"  轮数：      {n_trials}")
+    print(f"  每轮密码数：{n_passwords}")
+    print(f"  输出目录：  {output_dir}")
     print(f"{'='*60}\n")
 
-    print("  Warming up sensor (3s)...")
+    print("  传感器预热中（3 秒）...")
     time.sleep(3)
     sensor.drain()
     keyboard.drain()
@@ -457,7 +471,7 @@ def run_mixed2_mode(
         protocol_path = os.path.join(output_dir, f"{session_id}_protocol.json")
 
         total_dur = sum(s["duration_s"] for s in protocol)
-        print(f"\n  ══ Trial {trial_idx+1}/{n_trials} ({total_dur:.0f}s) ══")
+        print(f"\n  ══ 第 {trial_idx+1}/{n_trials} 轮（约 {total_dur:.0f} 秒）══")
 
         sf, sw = open_sensor_csv(sensor_path)
         ef, ew = open_events_csv(events_path)
@@ -486,7 +500,7 @@ def run_mixed2_mode(
         drain_t = threading.Thread(target=drain_fn, daemon=True)
         drain_t.start()
 
-        input(f"  Press ENTER to start trial {trial_idx+1} →")
+        input(f"  按回车开始第 {trial_idx+1} 轮 →")
         keyboard.drain()
 
         for seg_idx, seg in enumerate(protocol):
@@ -494,15 +508,17 @@ def run_mixed2_mode(
             dur = seg["duration_s"]
             label = seg["label"]
             typing_style = seg.get("typing_style", "")
+            label_zh = DISPLAY_LABELS_ZH.get(label, label)
+            typing_style_zh = TYPING_STYLE_ZH.get(typing_style, typing_style)
 
             if act == "keyboard":
                 prompt_text = seg.get("prompt_instructions", "")
-                print(f"    🔵 [{label}] ({dur:.0f}s) {typing_style}")
+                print(f"    🔵 [{label_zh}]（{dur:.0f} 秒）{typing_style_zh}")
                 if prompt_text:
                     for line in prompt_text.split("\n"):
                         print(f"       {line}")
             else:
-                print(f"    🟡 [{label}] ({dur:.0f}s)")
+                print(f"    🟡 [{label_zh}]（{dur:.0f} 秒）")
 
             block_start_ns = time.perf_counter_ns()
 
@@ -515,7 +531,7 @@ def run_mixed2_mode(
                         event_count += len(events)
                     elapsed = time.time() - (t_end - dur)
                     remaining = max(0, dur - elapsed)
-                    print(f"\r      [{elapsed:.0f}s / {dur:.0f}s] keys={event_count}  ",
+                    print(f"\r      [{elapsed:.0f} 秒 / {dur:.0f} 秒] 已记录按键={event_count}  ",
                           end="", flush=True)
                     time.sleep(0.02)
                 print()  # newline after progress
@@ -524,7 +540,7 @@ def run_mixed2_mode(
                 while time.time() < t_end:
                     elapsed = time.time() - (t_end - dur)
                     remaining = max(0, dur - elapsed)
-                    print(f"\r      [{elapsed:.0f}s / {dur:.0f}s]  ",
+                    print(f"\r      [{elapsed:.0f} 秒 / {dur:.0f} 秒]  ",
                           end="", flush=True)
                     time.sleep(0.2)
                 print()
@@ -565,12 +581,12 @@ def run_mixed2_mode(
                 "event_count": event_count,
             }, f, indent=2)
 
-        print(f"    ✓ {sample_count:,} sensor + {event_count} key events")
+        print(f"    ✓ 已保存 {sample_count:,} 条传感器样本，{event_count} 条按键事件")
 
     sensor.stop()
     keyboard.stop()
-    print(f"\n  ✓ All {n_trials} trials recorded.")
-    print(f"  Output → {output_dir}\n")
+    print(f"\n  ✓ 共完成 {n_trials} 轮采集。")
+    print(f"  输出目录：{output_dir}\n")
 
 
 # ── Activity log loading helper ──────────────────────────────

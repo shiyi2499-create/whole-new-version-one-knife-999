@@ -1,45 +1,19 @@
 """
-End-to-End Onset → Password Classifier Pipeline
-=================================================
-Full attack chain demonstration with TWO paths:
+End-to-End Evaluation
+=====================
 
-  Path A (original): password session → onset detect → classifier → top-k
-  Path B (new):      mixed2 stream → activity segment → find typing_2 →
-                     onset detect within typing_2 → gap-group → classify
+Path A:
+  password session -> onset detector -> password classifier
 
-Path B compares FOUR baselines (from most realistic to most oracle):
+Path B:
+  mixed2 continuous stream
+    -> password_boundary detector
+    -> predicted password episode(s)
+    -> onset detector inside episode(s)
+    -> gap-based grouping
+    -> existing password classifier
 
-  e2e_full:       predicted segment → predicted typing_2 → onset detect →
-                  gap-based password grouping → classify
-                  (zero GT information)
-
-  e2e_gt_seg:     GT segment boundary → onset detect → gap-based grouping
-                  → classify  (GT boundary only)
-
-  e2e_gt_aligned: GT boundary → onset detect → GT-onset-assisted alignment
-                  → classify  (GT boundary + GT onset timing)
-
-  gt_baseline:    GT onset times directly → classify  (full oracle)
-
-This decomposition isolates degradation sources:
-  e2e_full − gt_baseline     = total pipeline degradation
-  e2e_gt_seg − gt_baseline   = onset detection + grouping error
-  e2e_gt_aligned − gt_baseline = onset detection error only
-
-Run:
-  # Path A: test on password sessions
-  python3 eval_onset_e2e.py \\
-    --onset-checkpoint results/onset_detector.pt \\
-    --classifier-checkpoint results/inception_password_final.pt \\
-    --password-dirs data/raw/password/len_8 \\
-    --test-parts 17 18 19 20
-
-  # Path B: test on mixed2 streams (full segmentation pipeline)
-  python3 eval_onset_e2e.py \\
-    --onset-checkpoint results/onset_detector.pt \\
-    --activity-checkpoint results/activity_detector.pt \\
-    --classifier-checkpoint results/inception_password_final.pt \\
-    --mixed2-dirs data/raw/onset_mixed2
+This file does not modify the existing password classifier.
 """
 
 from __future__ import annotations
@@ -47,41 +21,41 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import math
 import os
 import re
 import sys
-from collections import defaultdict
 from typing import Optional
 
 import numpy as np
 import torch
 
-# ── Imports from onset detection module ──────────────────────
-
 from onset_model import build_onset_model
 from onset_preprocessor import (
-    load_sensor_csv,
-    load_events_csv,
-    load_activity_log,
-    resample_window,
-    extract_sliding_windows,
-    window_samples,
+    DEFAULT_LABEL_RADIUS_MS,
+    DEFAULT_STRIDE_MS,
     DEFAULT_TARGET_RATE_HZ,
     DEFAULT_WINDOW_MS,
-    DEFAULT_STRIDE_MS,
-    DEFAULT_LABEL_RADIUS_MS,
-    ACTIVITY_WINDOW_MS,
-    ACTIVITY_STRIDE_MS,
+    PASSWORD_BOUNDARY_STRIDE_MS,
+    PASSWORD_BOUNDARY_WINDOW_MS,
+    extract_sliding_windows,
+    get_password_segments_from_activity_log,
+    refine_password_segments_with_events,
+    load_activity_log,
+    load_events_csv,
+    load_sensor_csv,
+    resample_window,
+    window_samples,
 )
 from onset_utils import (
-    detect_peaks, nms_1d, match_events,
-    Episode, extract_episodes_from_activity_curve, classify_episodes_by_density,
-    match_episodes, format_episode_match_result, group_onsets_by_gap,
+    Episode,
+    decode_password_boundary_predictions,
+    group_onsets_by_gap,
+    match_episodes,
 )
-from eval_onset import run_activity_inference
+from eval_onset import run_password_boundary_inference
 
-# ── Imports from password classifier (parent project) ────────
+
+# ── Password-classifier imports ──────────────────────────────
 
 _PROJECT_ROOT = None
 
@@ -94,7 +68,7 @@ def _setup_project_imports(project_root: str = ""):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     _PROJECT_ROOT = root
     phase3 = os.path.join(root, "phase3_password_inception")
-    for p in [root, phase3]:
+    for p in (root, phase3):
         if p not in sys.path:
             sys.path.insert(0, p)
 
@@ -103,20 +77,17 @@ _setup_project_imports()
 
 try:
     from run_password_closure_inception import (
-        InceptionTimeClassifier,
         load_final_inception,
-        WindowConfig as ClassifierWindowConfig,
-        supported_key,
         normalize_sequence,
+        supported_key,
         topk_strings_from_prob_vectors,
     )
 except ImportError:
-    print("⚠ Could not import password classifier. Use --project-root to point "
-          "at the main project directory, or run from the project root.")
+    print("⚠ Could not import password classifier. Run from the project root or pass --project-root.")
     sys.exit(1)
 
 
-# ── Device ───────────────────────────────────────────────────
+# ── Device / model loaders ───────────────────────────────────
 
 def resolve_device(device: str = "auto") -> torch.device:
     req = (device or "auto").lower()
@@ -130,13 +101,15 @@ def resolve_device(device: str = "auto") -> torch.device:
     return torch.device(req)
 
 
-# ── Load models ──────────────────────────────────────────────
 
-def load_onset_detector(checkpoint_path: str, scaler_path: str, device: torch.device):
+def load_detector(checkpoint_path: str, scaler_path: str, device: torch.device):
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    n_classes = int(ckpt.get("n_classes", 1))
     model = build_onset_model(
         ckpt.get("model_name", "cnn"),
         n_channels=ckpt.get("n_channels", 6),
+        n_classes=n_classes,
+        task=ckpt.get("task", "onset"),
     ).to(device)
     model.load_state_dict(ckpt["model_state"])
     model.eval()
@@ -152,80 +125,46 @@ def detect_onsets_in_stream(
     onset_means: np.ndarray,
     onset_stds: np.ndarray,
     device: torch.device,
-    onset_window_ms: int = 150,
-    onset_stride_ms: int = 25,
+    onset_window_ms: int = DEFAULT_WINDOW_MS,
+    onset_stride_ms: int = DEFAULT_STRIDE_MS,
     target_rate_hz: int = DEFAULT_TARGET_RATE_HZ,
     threshold: float = 0.5,
     nms_radius_ms: float = 100.0,
-) -> list[float]:
-    """
-    Run onset detector on continuous sensor data.
-    Returns list of predicted onset timestamps in nanoseconds.
-    """
-    dummy_events = np.array([], dtype=np.int64)
+) -> list[int]:
+    from onset_utils import detect_peaks, nms_1d
+
     result = extract_sliding_windows(
-        sensor, dummy_events,
+        sensor,
+        np.array([], dtype=np.int64),
         window_ms=onset_window_ms,
         stride_ms=onset_stride_ms,
         label_radius_ms=DEFAULT_LABEL_RADIUS_MS,
         target_rate_hz=target_rate_hz,
     )
-
     if len(result["windows"]) == 0:
         return []
 
-    windows = result["windows"].astype(np.float32)
-    for ch in range(windows.shape[-1]):
-        windows[:, :, ch] = (windows[:, :, ch] - onset_means[ch]) / max(onset_stds[ch], 1e-10)
+    X = result["windows"].astype(np.float32)
+    for ch in range(X.shape[-1]):
+        X[:, :, ch] = (X[:, :, ch] - onset_means[ch]) / max(onset_stds[ch], 1e-10)
 
-    onset_model.eval()
     all_probs = []
     batch_size = 256
-    for i in range(0, len(windows), batch_size):
-        batch = torch.from_numpy(windows[i:i+batch_size]).to(device)
+    for i in range(0, len(X), batch_size):
+        batch = torch.from_numpy(X[i:i + batch_size]).to(device)
         with torch.no_grad():
             logits = onset_model(batch)
             probs = torch.sigmoid(logits.squeeze(-1))
-            all_probs.append(probs.cpu().numpy())
+        all_probs.append(probs.cpu().numpy())
 
-    probs = np.concatenate(all_probs)
+    probs = np.concatenate(all_probs) if all_probs else np.array([])
     times_s = result["times_s"]
-
     peaks = detect_peaks(probs, times_s, threshold=threshold, smooth_n=3)
     peaks = nms_1d(peaks, radius_s=nms_radius_ms / 1000.0)
-
-    onset_times_ns = [int(p["time_s"] * 1e9) for p in peaks]
-    return onset_times_ns
+    return [int(p["time_s"] * 1e9) for p in peaks]
 
 
-def detect_onsets_in_time_range(
-    sensor: np.ndarray,
-    onset_model: torch.nn.Module,
-    onset_means: np.ndarray,
-    onset_stds: np.ndarray,
-    device: torch.device,
-    start_s: float,
-    end_s: float,
-    **kwargs,
-) -> list[int]:
-    """Detect onsets only within a specific time range of the sensor data."""
-    ts_ns = sensor[:, 0]
-    start_ns = int(start_s * 1e9)
-    end_ns = int(end_s * 1e9)
-
-    idx_start = np.searchsorted(ts_ns, start_ns, side="left")
-    idx_end = np.searchsorted(ts_ns, end_ns, side="right")
-
-    if idx_end - idx_start < 10:
-        return []
-
-    sub_sensor = sensor[idx_start:idx_end]
-    return detect_onsets_in_stream(
-        sub_sensor, onset_model, onset_means, onset_stds, device, **kwargs,
-    )
-
-
-# ── Classifier windowing ────────────────────────────────────
+# ── Classifier windows ───────────────────────────────────────
 
 def cut_classifier_windows(
     sensor: np.ndarray,
@@ -237,33 +176,24 @@ def cut_classifier_windows(
     ts = sensor[:, 0]
     vals = sensor[:, 1:]
     target_len = window_samples(pre_ms + post_ms, target_rate_hz)
-    min_samples = 4
-
     windows = []
     for onset_ns in onset_times_ns:
         w_start = onset_ns - pre_ms * 1_000_000
         w_end = onset_ns + post_ms * 1_000_000
-
         idx_start = np.searchsorted(ts, w_start, side="left")
         idx_end = np.searchsorted(ts, w_end, side="right")
-
-        if idx_end - idx_start < min_samples:
+        if idx_end - idx_start < 4:
             windows.append(None)
             continue
-
         chunk = vals[idx_start:idx_end]
-        win = resample_window(chunk, target_len)
-        windows.append(win)
-
+        windows.append(resample_window(chunk, target_len))
     return windows
 
 
-# ── Classify windows ─────────────────────────────────────────
 
 def classify_windows(
     windows: list[Optional[np.ndarray]],
     classifier: torch.nn.Module,
-    classes: np.ndarray,
     means: np.ndarray,
     stds: np.ndarray,
     device: torch.device,
@@ -273,45 +203,29 @@ def classify_windows(
         return [None] * len(windows)
 
     X = np.stack([windows[i] for i in valid_indices]).astype(np.float32)
-
     for ch in range(X.shape[2]):
         X[:, :, ch] = (X[:, :, ch] - means[ch]) / (stds[ch] + 1e-10)
 
     classifier.eval()
-    X_t = torch.from_numpy(X).to(device)
     with torch.no_grad():
-        logits = classifier(X_t)
+        logits = classifier(torch.from_numpy(X).to(device))
         probs = torch.softmax(logits, dim=1).cpu().numpy()
 
-    results: list[Optional[np.ndarray]] = [None] * len(windows)
+    out: list[Optional[np.ndarray]] = [None] * len(windows)
     for batch_idx, orig_idx in enumerate(valid_indices):
-        results[orig_idx] = probs[batch_idx]
-
-    return results
-
-
-# ── Cluster onsets into typing episodes ──────────────────────
-
-def cluster_episodes(
-    onset_times_ns: list[int],
-    max_gap_ms: float = 1500.0,
-) -> list[list[int]]:
-    if not onset_times_ns:
-        return []
-
-    gap_ns = max_gap_ms * 1_000_000
-    episodes = [[onset_times_ns[0]]]
-
-    for t in onset_times_ns[1:]:
-        if t - episodes[-1][-1] > gap_ns:
-            episodes.append([t])
-        else:
-            episodes[-1].append(t)
-
-    return episodes
+        out[orig_idx] = probs[batch_idx]
+    return out
 
 
-# ── Levenshtein distance ─────────────────────────────────────
+
+def collect_onsets_inside_episodes(onset_times_ns: list[int], episodes: list[Episode]) -> list[list[int]]:
+    groups = []
+    for ep in episodes:
+        groups.append([t for t in onset_times_ns if ep.start_s <= (t / 1e9) <= ep.end_s])
+    return groups
+
+
+# ── Metrics helpers ──────────────────────────────────────────
 
 def levenshtein(s1: str, s2: str) -> int:
     if len(s1) < len(s2):
@@ -322,16 +236,66 @@ def levenshtein(s1: str, s2: str) -> int:
     for i, c1 in enumerate(s1):
         curr = [i + 1]
         for j, c2 in enumerate(s2):
-            curr.append(min(
-                prev[j + 1] + 1,
-                curr[j] + 1,
-                prev[j] + (0 if c1 == c2 else 1),
-            ))
+            curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (0 if c1 == c2 else 1)))
         prev = curr
     return prev[-1]
 
 
-# ── Full end-to-end eval on password sessions (Path A) ───────
+SEQ_HIT_CUTOFFS = (10, 50, 100)
+
+
+def score_sequence_paths(
+    path_onsets: dict[str, list[int]],
+    ref: str,
+    sensor: np.ndarray,
+    classifier,
+    cls_classes,
+    cls_means,
+    cls_stds,
+    device,
+    target_rate_hz: int,
+    stats: dict,
+):
+    tags = ["e2e_full", "e2e_gt_seg", "e2e_gt_aligned", "gt_baseline"]
+    for tag in tags:
+        windows = cut_classifier_windows(sensor, path_onsets[tag], target_rate_hz=target_rate_hz)
+        prob_vecs = classify_windows(windows, classifier, cls_means, cls_stds, device)
+        valid_probs = [p for p in prob_vecs if p is not None]
+        if not valid_probs:
+            hyp = ""
+            prob_matrix = None
+        else:
+            prob_matrix = np.stack(valid_probs)
+            hyp = "".join(cls_classes[int(np.argmax(p))] for p in valid_probs)
+
+        for i, ref_ch in enumerate(ref):
+            if i >= len(valid_probs):
+                break
+            ranked = np.argsort(-valid_probs[i])
+            ranked_classes = [cls_classes[r] for r in ranked]
+            for k in (1, 3, 5):
+                if ref_ch in ranked_classes[:k]:
+                    stats["topk_correct"][tag][k] += 1
+
+        stats["total_edits"][tag] += levenshtein(ref, hyp)
+
+        if prob_matrix is not None:
+            try:
+                candidates = topk_strings_from_prob_vectors(
+                    prob_matrix,
+                    cls_classes,
+                    branch_topk=5,
+                    beam_width=max(SEQ_HIT_CUTOFFS),
+                )
+                candidate_strings = [c["candidate"] for c in candidates]
+                for cutoff in SEQ_HIT_CUTOFFS:
+                    if ref in candidate_strings[:cutoff]:
+                        stats["seq_hits"][tag][cutoff] += 1
+            except Exception:
+                pass
+
+
+# ── Path A helpers ───────────────────────────────────────────
 
 PART_RE = re.compile(r"_part(\d+)_")
 
@@ -341,19 +305,22 @@ def discover_password_sessions(dirs: list[str]) -> list[str]:
     for d in dirs:
         if not os.path.isdir(d):
             continue
-        for f in sorted(os.listdir(d)):
-            if f.startswith(".") or f.startswith("._"):
-                continue
-            if f.endswith("_sensor.csv") and "_free_type_" in f:
-                prefix = os.path.join(d, f.replace("_sensor.csv", ""))
-                if os.path.exists(prefix + "_events.csv"):
-                    sessions.append(prefix)
-    return sessions
+        for root, _subdirs, files in os.walk(d):
+            for f in sorted(files):
+                if f.startswith(".") or f.startswith("._"):
+                    continue
+                if f.endswith("_sensor.csv") and "_free_type_" in f:
+                    prefix = os.path.join(root, f.replace("_sensor.csv", ""))
+                    if os.path.exists(prefix + "_events.csv"):
+                        sessions.append(prefix)
+    return sorted(sessions)
+
 
 
 def parse_part(sess: str) -> int:
     m = PART_RE.search(os.path.basename(sess))
     return int(m.group(1)) if m else -1
+
 
 
 def load_ground_truth_sequences(session_prefix: str) -> list[dict]:
@@ -373,8 +340,7 @@ def load_ground_truth_sequences(session_prefix: str) -> list[dict]:
                 continue
             key = row["key"].lower()
             ts = int(row["timestamp_ns"])
-            if key in {"shift", "capslock", "ctrl", "alt", "cmd", "tab", "esc",
-                       "left", "right", "up", "down", "delete"}:
+            if key in {"shift", "capslock", "ctrl", "alt", "cmd", "tab", "esc", "left", "right", "up", "down", "delete"}:
                 continue
             if key in {"enter", "return"}:
                 sequences.append(cur_events.copy())
@@ -392,47 +358,52 @@ def load_ground_truth_sequences(session_prefix: str) -> list[dict]:
         ref = normalize_sequence(att.get("typed_text", ""))
         if not ref or not seq_events:
             continue
-        gt_times_ns = [e["timestamp_ns"] for e in seq_events]
         out.append({
             "reference": ref,
-            "gt_onset_times_ns": gt_times_ns,
-            "events": seq_events,
+            "gt_onset_times_ns": [e["timestamp_ns"] for e in seq_events],
         })
     return out
 
 
-SEQ_HIT_CUTOFFS = (10, 50, 100)
-
+# ── Path A eval ──────────────────────────────────────────────
 
 def eval_e2e_on_sessions(
-    onset_model, onset_means, onset_stds, onset_ckpt,
-    classifier, cls_classes, cls_means, cls_stds,
-    device, sessions,
-    threshold=0.5, nms_radius_ms=100.0,
+    onset_model,
+    onset_means,
+    onset_stds,
+    onset_ckpt,
+    classifier,
+    cls_classes,
+    cls_means,
+    cls_stds,
+    device,
+    sessions,
+    threshold=0.5,
+    nms_radius_ms=100.0,
 ) -> dict:
-    """Full E2E evaluation: onset → classifier → metrics (Path A)."""
-    onset_window_ms = onset_ckpt.get("window_ms", 150)
-    onset_stride_ms = onset_ckpt.get("stride_ms", 25)
+    onset_window_ms = onset_ckpt.get("window_ms", DEFAULT_WINDOW_MS)
+    onset_stride_ms = onset_ckpt.get("stride_ms", DEFAULT_STRIDE_MS)
     target_rate_hz = onset_ckpt.get("target_rate_hz", DEFAULT_TARGET_RATE_HZ)
 
     total_chars = 0
     total_seqs = 0
     missed_chars = 0
     extra_chars = 0
-
-    topk_correct = {"e2e": defaultdict(int), "gt": defaultdict(int)}
-    total_edits = {"e2e": 0, "gt": 0}
-    seq_hits = {"e2e": defaultdict(int), "gt": defaultdict(int)}
+    topk_correct = {1: 0, 3: 0, 5: 0}
+    seq_hits = {c: 0 for c in SEQ_HIT_CUTOFFS}
+    total_edits = 0
 
     for sess in sessions:
         sensor = load_sensor_csv(sess + "_sensor.csv")
         gt_sequences = load_ground_truth_sequences(sess)
-
         if not gt_sequences:
             continue
-
-        all_onset_ns = detect_onsets_in_stream(
-            sensor, onset_model, onset_means, onset_stds, device,
+        pred_onsets_ns = detect_onsets_in_stream(
+            sensor,
+            onset_model,
+            onset_means,
+            onset_stds,
+            device,
             onset_window_ms=onset_window_ms,
             onset_stride_ms=onset_stride_ms,
             target_rate_hz=target_rate_hz,
@@ -442,421 +413,261 @@ def eval_e2e_on_sessions(
 
         for seq in gt_sequences:
             ref = seq["reference"]
-            gt_times = seq["gt_onset_times_ns"]
+            gt_onsets = seq["gt_onset_times_ns"]
+            if not ref:
+                continue
             total_chars += len(ref)
             total_seqs += 1
 
-            seq_start = min(gt_times) - 200_000_000
-            seq_end = max(gt_times) + 500_000_000
-            e2e_onsets = [t for t in all_onset_ns if seq_start <= t <= seq_end]
+            pw_start = min(gt_onsets) - 200_000_000
+            pw_end = max(gt_onsets) + 500_000_000
+            seq_pred_onsets = [t for t in pred_onsets_ns if pw_start <= t <= pw_end]
+            windows = cut_classifier_windows(sensor, seq_pred_onsets, target_rate_hz=target_rate_hz)
+            prob_vecs = classify_windows(windows, classifier, cls_means, cls_stds, device)
+            valid_probs = [p for p in prob_vecs if p is not None]
+            hyp = "".join(cls_classes[int(np.argmax(p))] for p in valid_probs)
 
-            gt_match = match_events(
-                [t / 1e9 for t in e2e_onsets],
-                [t / 1e9 for t in gt_times],
-                tolerance_s=0.100,
-            )
-            missed_chars += gt_match.fn
-            extra_chars += gt_match.fp
+            missed_chars += max(0, len(gt_onsets) - len(seq_pred_onsets))
+            extra_chars += max(0, len(seq_pred_onsets) - len(gt_onsets))
 
-            for tag, onsets in [("e2e", e2e_onsets), ("gt", gt_times)]:
-                windows = cut_classifier_windows(sensor, onsets, target_rate_hz=target_rate_hz)
-                prob_vecs = classify_windows(
-                    windows, classifier, cls_classes, cls_means, cls_stds, device,
-                )
+            for i, ref_ch in enumerate(ref):
+                if i >= len(valid_probs):
+                    break
+                ranked = np.argsort(-valid_probs[i])
+                ranked_classes = [cls_classes[r] for r in ranked]
+                for k in (1, 3, 5):
+                    if ref_ch in ranked_classes[:k]:
+                        topk_correct[k] += 1
 
-                valid_probs = [p for p in prob_vecs if p is not None]
-                if not valid_probs:
-                    total_edits[tag] += len(ref)
-                    continue
-
-                prob_matrix = np.stack(valid_probs)
-                hyp_chars = [cls_classes[int(np.argmax(p))] for p in valid_probs]
-                hyp = "".join(hyp_chars)
-
-                for i, ref_ch in enumerate(ref):
-                    if i >= len(valid_probs):
-                        break
-                    ranked = np.argsort(-valid_probs[i])
-                    ranked_classes = [cls_classes[r] for r in ranked]
-                    for k in (1, 3, 5):
-                        if ref_ch in ranked_classes[:k]:
-                            topk_correct[tag][k] += 1
-
-                total_edits[tag] += levenshtein(ref, hyp)
-
+            total_edits += levenshtein(ref, hyp)
+            if valid_probs:
                 try:
-                    candidates = topk_strings_from_prob_vectors(
-                        prob_matrix, cls_classes,
-                        branch_topk=5,
-                        beam_width=max(SEQ_HIT_CUTOFFS),
-                    )
-                    candidate_strings = [c["candidate"] for c in candidates]
+                    candidate_strings = [c["candidate"] for c in topk_strings_from_prob_vectors(np.stack(valid_probs), cls_classes, branch_topk=5, beam_width=max(SEQ_HIT_CUTOFFS))]
                     for cutoff in SEQ_HIT_CUTOFFS:
                         if ref in candidate_strings[:cutoff]:
-                            seq_hits[tag][cutoff] += 1
+                            seq_hits[cutoff] += 1
                 except Exception:
                     pass
 
     def safe_div(a, b):
         return a / max(b, 1)
 
-    def build_metrics(tag):
-        m = {
-            "char_top1": safe_div(topk_correct[tag][1], total_chars),
-            "char_top3": safe_div(topk_correct[tag][3], total_chars),
-            "char_top5": safe_div(topk_correct[tag][5], total_chars),
-            "cer": safe_div(total_edits[tag], total_chars),
-        }
-        for cutoff in SEQ_HIT_CUTOFFS:
-            m[f"sequence_top{cutoff}"] = safe_div(seq_hits[tag][cutoff], total_seqs)
-        return m
-
-    e2e_m = build_metrics("e2e")
-    gt_m = build_metrics("gt")
-    delta = {k: e2e_m[k] - gt_m[k] for k in e2e_m}
-
     results = {
         "total_sequences": total_seqs,
         "total_chars": total_chars,
-        "e2e": {**e2e_m, "missed_chars": missed_chars, "extra_chars": extra_chars},
-        "gt_baseline": gt_m,
-        "delta": delta,
+        "char_top1": safe_div(topk_correct[1], total_chars),
+        "char_top3": safe_div(topk_correct[3], total_chars),
+        "char_top5": safe_div(topk_correct[5], total_chars),
+        "cer": safe_div(total_edits, total_chars),
+        "missed_characters": missed_chars,
+        "extra_characters": extra_chars,
     }
+    for cutoff in SEQ_HIT_CUTOFFS:
+        results[f"sequence_top{cutoff}"] = safe_div(seq_hits[cutoff], total_seqs)
 
     print(f"\n{'='*60}")
-    print(f"  END-TO-END ATTACK CHAIN RESULTS (Path A: password sessions)")
+    print("  PATH A: PASSWORD SESSIONS")
     print(f"{'='*60}")
-    print(f"  Sequences: {total_seqs}  |  Chars: {total_chars}")
-    print(f"  Missed chars (onset FN): {missed_chars}  |  Extra chars (onset FP): {extra_chars}")
-    for label, tag in [("E2E (onset → classifier)", "e2e"),
-                       ("GT-onset baseline", "gt_baseline")]:
-        m = results[tag]
-        print(f"\n  {label}:")
-        print(f"    char_top1: {m['char_top1']:.1%}")
-        print(f"    char_top3: {m['char_top3']:.1%}")
-        print(f"    char_top5: {m['char_top5']:.1%}")
-        for cutoff in SEQ_HIT_CUTOFFS:
-            print(f"    seq_top{cutoff}: {m[f'sequence_top{cutoff}']:.1%}")
-        print(f"    CER:       {m['cer']:.1%}")
-    print(f"\n  Degradation (E2E − GT):")
-    for k in ["char_top1", "char_top3", "char_top5", "cer"] + \
-             [f"sequence_top{c}" for c in SEQ_HIT_CUTOFFS]:
-        print(f"    Δ {k}: {delta[k]:+.1%}")
+    print(f"  Sequences: {total_seqs}  |  Characters: {total_chars}")
+    print(f"  char_top1: {results['char_top1']:.1%}")
+    print(f"  char_top3: {results['char_top3']:.1%}")
+    print(f"  char_top5: {results['char_top5']:.1%}")
+    for cutoff in SEQ_HIT_CUTOFFS:
+        print(f"  seq_top{cutoff}: {results[f'sequence_top{cutoff}']:.1%}")
+    print(f"  CER:       {results['cer']:.1%}")
+    print(f"  missed / extra chars: {missed_chars} / {extra_chars}")
     print(f"{'='*60}")
-
     return results
 
 
-# ══════════════════════════════════════════════════════════════
-# Path B: Mixed2 stream → activity segment → typing_2 → classify
-# ══════════════════════════════════════════════════════════════
+# ── Path B eval ──────────────────────────────────────────────
 
 def eval_e2e_on_mixed2(
-    onset_model, onset_means, onset_stds, onset_ckpt,
-    activity_model, act_means, act_stds, act_ckpt,
-    classifier, cls_classes, cls_means, cls_stds,
+    onset_model,
+    onset_means,
+    onset_stds,
+    onset_ckpt,
+    boundary_model,
+    boundary_means,
+    boundary_stds,
+    boundary_ckpt,
+    classifier,
+    cls_classes,
+    cls_means,
+    cls_stds,
     device,
-    mixed2_dirs: list[str],
+    mixed2_dirs,
     onset_threshold: float = 0.5,
-    activity_threshold: float = 0.5,
+    boundary_threshold: float = 0.5,
+    boundary_gap_s: float = 0.60,
     nms_radius_ms: float = 100.0,
 ) -> dict:
-    """
-    Full segmentation E2E on mixed2 streams.
-
-    Four comparison paths (from most realistic to most oracle):
-
-      e2e_full:       activity segment → typing_2 → onset detect →
-                      gap-based password grouping → classify
-                      (NO ground-truth information used)
-
-      e2e_gt_seg:     GT typing_2 segment boundary → onset detect →
-                      gap-based password grouping → classify
-                      (GT segment boundaries, but predicted onsets & grouping)
-
-      e2e_gt_aligned: GT typing_2 segment → onset detect →
-                      GT-onset-assisted per-password alignment → classify
-                      (GT boundaries + GT onset timing for alignment)
-
-      gt_baseline:    GT onset times directly → classify
-                      (full oracle)
-
-    The key difference from the previous version: e2e_full now uses
-    predicted-onset gap-based grouping with n_groups = len(passwords),
-    NOT GT onset times for per-password alignment.
-    """
-    from onset_preprocessor import discover_sessions
-
-    sessions = discover_sessions(mixed2_dirs, mode_filter="", dedup=False)
+    sessions = []
+    for d in mixed2_dirs:
+        if not os.path.isdir(d):
+            continue
+        for f in sorted(os.listdir(d)):
+            if f.endswith("_sensor.csv") and "mixed2" in f:
+                sessions.append(os.path.join(d, f.replace("_sensor.csv", "")))
+    sessions = sorted(set(sessions))
     if not sessions:
         print("  ⚠ No mixed2 sessions found")
         return {}
 
-    onset_window_ms = onset_ckpt.get("window_ms", 150)
-    onset_stride_ms = onset_ckpt.get("stride_ms", 25)
-    act_window_ms = act_ckpt.get("window_ms", ACTIVITY_WINDOW_MS)
-    act_stride_ms = act_ckpt.get("stride_ms", ACTIVITY_STRIDE_MS)
-    target_rate_hz = onset_ckpt.get("target_rate_hz", DEFAULT_TARGET_RATE_HZ)
+    onset_window_ms = int(onset_ckpt.get("window_ms", DEFAULT_WINDOW_MS))
+    onset_stride_ms = int(onset_ckpt.get("stride_ms", DEFAULT_STRIDE_MS))
+    target_rate_hz = int(onset_ckpt.get("target_rate_hz", DEFAULT_TARGET_RATE_HZ))
+    boundary_window_ms = int(boundary_ckpt.get("window_ms", PASSWORD_BOUNDARY_WINDOW_MS))
+    boundary_stride_ms = int(boundary_ckpt.get("stride_ms", PASSWORD_BOUNDARY_STRIDE_MS))
 
-    # Accumulators for 4 paths
     tags = ["e2e_full", "e2e_gt_seg", "e2e_gt_aligned", "gt_baseline"]
-    total_chars = 0
+    stats = {
+        "topk_correct": {tag: {1: 0, 3: 0, 5: 0} for tag in tags},
+        "seq_hits": {tag: {cutoff: 0 for cutoff in SEQ_HIT_CUTOFFS} for tag in tags},
+        "total_edits": {tag: 0 for tag in tags},
+    }
     total_seqs = 0
-    topk_correct = {t: defaultdict(int) for t in tags}
-    total_edits = {t: 0 for t in tags}
-    seq_hits = {t: defaultdict(int) for t in tags}
-
+    total_chars = 0
     episode_results = []
 
     for sess in sessions:
-        sensor_path = sess + "_sensor.csv"
-        events_path = sess + "_events.csv"
         activity_log_path = sess + "_activity_log.csv"
-
+        events_path = sess + "_events.csv"
         if not os.path.exists(activity_log_path):
             continue
 
-        sensor = load_sensor_csv(sensor_path)
+        sensor = load_sensor_csv(sess + "_sensor.csv")
         activity_segments = load_activity_log(activity_log_path)
-
-        if os.path.exists(events_path):
-            events = load_events_csv(events_path, press_only=True)
-        else:
-            events = np.array([], dtype=np.int64)
-
-        # Find ground-truth typing_2 segments
-        gt_typing2_segs = [
-            seg for seg in activity_segments
-            if seg.get("label", "") == "typing_2"
-        ]
-
-        if not gt_typing2_segs:
+        events = load_events_csv(events_path, press_only=True) if os.path.exists(events_path) else np.array([], dtype=np.int64)
+        gt_password_segs = refine_password_segments_with_events(activity_segments, events)
+        if not gt_password_segs:
             continue
 
-        # Get GT passwords from protocol
         gt_passwords = []
-        for seg in gt_typing2_segs:
-            gt_passwords.extend(seg.get("prompts", []))
-        gt_passwords = [p for p in gt_passwords if p]
-
+        for seg in gt_password_segs:
+            gt_passwords.extend([p for p in seg.get("prompts", []) if p])
         if not gt_passwords:
             continue
 
-        n_passwords = len(gt_passwords)
+        gt_episode_objs = [Episode(start_s=seg["start_time_ns"] / 1e9, end_s=seg["end_time_ns"] / 1e9, label="password") for seg in gt_password_segs]
 
-        # ── Step 1: Activity segmentation ──
-        act_probs, act_times = run_activity_inference(
-            activity_model, sensor, act_means, act_stds, device,
-            window_ms=act_window_ms,
-            stride_ms=act_stride_ms,
+        # Step 1: predicted password boundary -> episode(s)
+        boundary_probs, boundary_times = run_password_boundary_inference(
+            boundary_model,
+            sensor,
+            boundary_means,
+            boundary_stds,
+            device,
+            window_ms=boundary_window_ms,
+            stride_ms=boundary_stride_ms,
             target_rate_hz=target_rate_hz,
         )
+        pred_password_eps = decode_password_boundary_predictions(
+            boundary_probs,
+            boundary_times,
+            password_threshold=boundary_threshold,
+            start_end_threshold=0.30,
+            min_duration_s=0.40,
+            merge_gap_s=boundary_gap_s,
+        )
+        ep_match = match_episodes(pred_password_eps, gt_episode_objs, min_iou=0.3)
+        episode_results.append(ep_match)
 
-        pred_episodes = []
-        if len(act_probs) > 0:
-            pred_episodes = extract_episodes_from_activity_curve(
-                act_probs, act_times,
-                threshold=activity_threshold,
-                min_duration_s=0.5,
-                merge_gap_s=0.8,
-            )
-
-        # ── Step 2: Detect onsets across entire stream ──
-        all_onset_ns = detect_onsets_in_stream(
-            sensor, onset_model, onset_means, onset_stds, device,
+        # Step 2: onset detector across full stream
+        all_onsets_ns = detect_onsets_in_stream(
+            sensor,
+            onset_model,
+            onset_means,
+            onset_stds,
+            device,
             onset_window_ms=onset_window_ms,
             onset_stride_ms=onset_stride_ms,
             target_rate_hz=target_rate_hz,
             threshold=onset_threshold,
             nms_radius_ms=nms_radius_ms,
         )
-        onset_times_s = [t / 1e9 for t in all_onset_ns]
 
-        # Classify predicted episodes (demo-protocol heuristic)
-        pred_episodes = classify_episodes_by_density(pred_episodes, onset_times_s)
+        # Collect onsets for each path using refined password episodes.
+        #
+        # e2e_full and e2e_gt_seg are intentionally kept GT-free at the grouping
+        # stage: we keep the auto-grouped onset lists in temporal order and score
+        # them against references by index only. No GT group count / matching is
+        # used there anymore.
+        gt_groups = [events[(events >= int(seg["start_time_ns"])) & (events <= int(seg["end_time_ns"]))].tolist() for seg in gt_password_segs]
+        full_groups = collect_onsets_inside_episodes(all_onsets_ns, pred_password_eps)
+        gtseg_groups = collect_onsets_inside_episodes(all_onsets_ns, gt_episode_objs)
 
-        # Find predicted typing_2 episodes
-        pred_typing2 = [ep for ep in pred_episodes if ep.label == "typing_2"]
+        # Explicit oracle baseline: refined GT boundary + predicted onset, then
+        # per-password groups are recovered from the GT event ranges. This is the
+        # only path allowed to use GT-assisted grouping/alignment semantics.
+        gt_aligned_groups = []
+        for seg in gt_password_segs:
+            start_ns = int(seg["start_time_ns"])
+            end_ns = int(seg["end_time_ns"])
+            gt_aligned_groups.append([t for t in all_onsets_ns if start_ns <= t <= end_ns])
 
-        # Episode matching for boundary metrics
-        gt_episodes = []
-        for seg in activity_segments:
-            if seg["activity"] == "keyboard":
-                gt_episodes.append(Episode(
-                    start_s=seg["start_time_ns"] / 1e9,
-                    end_s=seg["end_time_ns"] / 1e9,
-                    label=seg.get("label", "keyboard"),
-                ))
-        ep_match = match_episodes(pred_episodes, gt_episodes, min_iou=0.3)
-        episode_results.append(ep_match)
-
-        # ── Collect onsets for each path ──
-
-        # e2e_full: onsets within PREDICTED typing_2 episodes
-        e2e_full_onsets_ns = []
-        for ep in pred_typing2:
-            for t_ns in all_onset_ns:
-                t_s = t_ns / 1e9
-                if ep.start_s <= t_s <= ep.end_s:
-                    e2e_full_onsets_ns.append(t_ns)
-
-        # e2e_gt_seg / e2e_gt_aligned: onsets within GT typing_2 segments
-        e2e_gtseg_onsets_ns = []
-        for seg in gt_typing2_segs:
-            for t_ns in all_onset_ns:
-                if seg["start_time_ns"] <= t_ns <= seg["end_time_ns"]:
-                    e2e_gtseg_onsets_ns.append(t_ns)
-
-        # GT onset times within typing_2 segments, grouped per-password
-        gt_onset_in_typing2 = []
-        for seg in gt_typing2_segs:
-            gt_mask = (events >= seg["start_time_ns"]) & (events <= seg["end_time_ns"])
-            gt_onset_in_typing2.extend(events[gt_mask].tolist())
-        gt_onset_in_typing2.sort()
-
-        gt_groups = group_onsets_by_gap(gt_onset_in_typing2, n_groups=n_passwords)
-
-        # ── Gap-based grouping of predicted onsets (NO GT info) ──
-        e2e_full_groups = group_onsets_by_gap(
-            e2e_full_onsets_ns, n_groups=n_passwords,
-        )
-        e2e_gtseg_groups = group_onsets_by_gap(
-            e2e_gtseg_onsets_ns, n_groups=n_passwords,
-        )
-
-        # ── GT-assisted grouping for the oracle-aligned baseline ──
-        # Uses GT onset group time ranges to select predicted onsets
-        e2e_gt_aligned_groups = []
-        for gt_grp in gt_groups:
-            if not gt_grp:
-                e2e_gt_aligned_groups.append([])
-                continue
-            pw_start = min(gt_grp) - 200_000_000
-            pw_end = max(gt_grp) + 500_000_000
-            aligned = [t for t in e2e_gtseg_onsets_ns if pw_start <= t <= pw_end]
-            e2e_gt_aligned_groups.append(aligned)
-
-        # ── Score each password across 4 paths ──
         for pw_idx, ref in enumerate(gt_passwords):
-            if not ref:
-                continue
-            total_chars += len(ref)
             total_seqs += 1
-
-            # Select onset group per path
+            total_chars += len(ref)
             path_onsets = {
-                "e2e_full": e2e_full_groups[pw_idx] if pw_idx < len(e2e_full_groups) else [],
-                "e2e_gt_seg": e2e_gtseg_groups[pw_idx] if pw_idx < len(e2e_gtseg_groups) else [],
-                "e2e_gt_aligned": e2e_gt_aligned_groups[pw_idx] if pw_idx < len(e2e_gt_aligned_groups) else [],
+                "e2e_full": full_groups[pw_idx] if pw_idx < len(full_groups) else [],
+                "e2e_gt_seg": gtseg_groups[pw_idx] if pw_idx < len(gtseg_groups) else [],
+                "e2e_gt_aligned": gt_aligned_groups[pw_idx] if pw_idx < len(gt_aligned_groups) else [],
                 "gt_baseline": gt_groups[pw_idx] if pw_idx < len(gt_groups) else [],
             }
+            score_sequence_paths(
+                path_onsets,
+                ref,
+                sensor,
+                classifier,
+                cls_classes,
+                cls_means,
+                cls_stds,
+                device,
+                target_rate_hz,
+                stats,
+            )
 
-            for tag in tags:
-                onsets_for_pw = path_onsets[tag]
-
-                windows = cut_classifier_windows(
-                    sensor, onsets_for_pw, target_rate_hz=target_rate_hz,
-                )
-                prob_vecs = classify_windows(
-                    windows, classifier, cls_classes, cls_means, cls_stds, device,
-                )
-
-                valid_probs = [p for p in prob_vecs if p is not None]
-                if not valid_probs:
-                    total_edits[tag] += len(ref)
-                    continue
-
-                prob_matrix = np.stack(valid_probs)
-                hyp_chars = [cls_classes[int(np.argmax(p))] for p in valid_probs]
-                hyp = "".join(hyp_chars)
-
-                for i, ref_ch in enumerate(ref):
-                    if i >= len(valid_probs):
-                        break
-                    ranked = np.argsort(-valid_probs[i])
-                    ranked_classes = [cls_classes[r] for r in ranked]
-                    for k in (1, 3, 5):
-                        if ref_ch in ranked_classes[:k]:
-                            topk_correct[tag][k] += 1
-
-                total_edits[tag] += levenshtein(ref, hyp)
-
-                try:
-                    candidates = topk_strings_from_prob_vectors(
-                        prob_matrix, cls_classes,
-                        branch_topk=5,
-                        beam_width=max(SEQ_HIT_CUTOFFS),
-                    )
-                    candidate_strings = [c["candidate"] for c in candidates]
-                    for cutoff in SEQ_HIT_CUTOFFS:
-                        if ref in candidate_strings[:cutoff]:
-                            seq_hits[tag][cutoff] += 1
-                except Exception:
-                    pass
-
-    # ── Compile results ──
     def safe_div(a, b):
         return a / max(b, 1)
 
-    def build_metrics(tag):
+    results = {"total_sequences": total_seqs, "total_chars": total_chars}
+    for tag in tags:
         m = {
-            "char_top1": safe_div(topk_correct[tag][1], total_chars),
-            "char_top3": safe_div(topk_correct[tag][3], total_chars),
-            "char_top5": safe_div(topk_correct[tag][5], total_chars),
-            "cer": safe_div(total_edits[tag], total_chars),
+            "char_top1": safe_div(stats["topk_correct"][tag][1], total_chars),
+            "char_top3": safe_div(stats["topk_correct"][tag][3], total_chars),
+            "char_top5": safe_div(stats["topk_correct"][tag][5], total_chars),
+            "cer": safe_div(stats["total_edits"][tag], total_chars),
         }
         for cutoff in SEQ_HIT_CUTOFFS:
-            m[f"sequence_top{cutoff}"] = safe_div(seq_hits[tag][cutoff], total_seqs)
-        return m
+            m[f"sequence_top{cutoff}"] = safe_div(stats["seq_hits"][tag][cutoff], total_seqs)
+        results[tag] = m
 
-    results = {
-        "total_sequences": total_seqs,
-        "total_chars": total_chars,
-    }
+    results["delta_full_vs_gt"] = {k: results["e2e_full"][k] - results["gt_baseline"][k] for k in results["gt_baseline"]}
+    results["delta_gtseg_vs_gt"] = {k: results["e2e_gt_seg"][k] - results["gt_baseline"][k] for k in results["gt_baseline"]}
+    results["delta_gt_aligned_vs_gt"] = {k: results["e2e_gt_aligned"][k] - results["gt_baseline"][k] for k in results["gt_baseline"]}
 
-    for tag in tags:
-        results[tag] = build_metrics(tag)
-
-    # Degradation tables
-    results["delta_full_vs_gt"] = {
-        k: results["e2e_full"][k] - results["gt_baseline"][k]
-        for k in results["gt_baseline"]
-    }
-    results["delta_gtseg_vs_gt"] = {
-        k: results["e2e_gt_seg"][k] - results["gt_baseline"][k]
-        for k in results["gt_baseline"]
-    }
-    results["delta_gt_aligned_vs_gt"] = {
-        k: results["e2e_gt_aligned"][k] - results["gt_baseline"][k]
-        for k in results["gt_baseline"]
-    }
-
-    # Episode boundary metrics
     if episode_results:
         all_ious = [iou for r in episode_results for iou in r.ious]
         all_start = [e for r in episode_results for e in r.start_errors_s]
         all_end = [e for r in episode_results for e in r.end_errors_s]
-        n_sep = sum(1 for r in episode_results if r.correctly_separated)
-        n_sep_total = sum(1 for r in episode_results if r.n_gt >= 2)
-
         results["episode_metrics"] = {
             "mean_iou": float(np.mean(all_ious)) if all_ious else 0.0,
-            "mean_start_error_ms": float(np.mean(all_start)) * 1000 if all_start else float("inf"),
-            "mean_end_error_ms": float(np.mean(all_end)) * 1000 if all_end else float("inf"),
-            "separation_accuracy": n_sep / max(n_sep_total, 1),
+            "mean_start_error_ms": float(np.mean(all_start)) * 1000.0 if all_start else float("inf"),
+            "mean_end_error_ms": float(np.mean(all_end)) * 1000.0 if all_end else float("inf"),
+            "episode_precision": sum(r.n_matched for r in episode_results) / max(sum(r.n_pred for r in episode_results), 1),
+            "episode_recall": sum(r.n_matched for r in episode_results) / max(sum(r.n_gt for r in episode_results), 1),
         }
 
-    # Print
     print(f"\n{'='*60}")
-    print(f"  END-TO-END MIXED2 RESULTS (Path B: segment → typing_2 → classify)")
+    print("  PATH B: MIXED2 PASSWORD BOUNDARY -> ONSET -> CLASSIFIER")
     print(f"{'='*60}")
     print(f"  Sequences: {total_seqs}  |  Chars: {total_chars}")
-
     for label, tag in [
-        ("Full E2E (segment → typing_2 → onset → gap-group → classify)", "e2e_full"),
-        ("GT-segment (GT boundary → onset → gap-group → classify)", "e2e_gt_seg"),
-        ("GT-aligned (GT boundary → onset → GT-assisted alignment → classify)", "e2e_gt_aligned"),
-        ("GT-onset baseline (GT onsets → classify)", "gt_baseline"),
+        ("Full E2E (pred boundary -> onset -> per-episode grouping, no GT alignment -> classify)", "e2e_full"),
+        ("GT segment (refined GT boundary -> onset -> per-episode grouping, no GT alignment -> classify)", "e2e_gt_seg"),
+        ("GT aligned oracle (GT boundary -> onset -> GT-assisted grouping -> classify)", "e2e_gt_aligned"),
+        ("GT baseline (GT onsets -> classify)", "gt_baseline"),
     ]:
         m = results[tag]
         print(f"\n  {label}:")
@@ -869,48 +680,35 @@ def eval_e2e_on_mixed2(
 
     if "episode_metrics" in results:
         em = results["episode_metrics"]
-        print(f"\n  Episode boundary metrics:")
-        print(f"    Mean IoU: {em['mean_iou']:.3f}")
-        print(f"    Start error: {em['mean_start_error_ms']:.1f}ms")
-        print(f"    End error:   {em['mean_end_error_ms']:.1f}ms")
-        print(f"    Separation:  {em['separation_accuracy']:.1%}")
+        print(f"\n  Boundary metrics:")
+        print(f"    episode_precision: {em['episode_precision']:.3f}")
+        print(f"    episode_recall:    {em['episode_recall']:.3f}")
+        print(f"    mean_iou:          {em['mean_iou']:.3f}")
+        print(f"    start_error:       {em['mean_start_error_ms']:.1f}ms")
+        print(f"    end_error:         {em['mean_end_error_ms']:.1f}ms")
 
-    print(f"\n  Degradation (Full E2E − GT baseline):")
-    for k in ["char_top1", "char_top3", "char_top5", "cer"]:
-        print(f"    Δ {k}: {results['delta_full_vs_gt'][k]:+.1%}")
-
-    print(f"\n  Degradation (GT-segment − GT baseline):")
-    for k in ["char_top1", "char_top3", "char_top5", "cer"]:
-        print(f"    Δ {k}: {results['delta_gtseg_vs_gt'][k]:+.1%}")
-
-    print(f"\n  Degradation (GT-aligned − GT baseline):")
-    for k in ["char_top1", "char_top3", "char_top5", "cer"]:
-        print(f"    Δ {k}: {results['delta_gt_aligned_vs_gt'][k]:+.1%}")
-
-    print(f"{'='*60}")
     return results
 
 
 # ── CLI ──────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="End-to-end onset → classifier evaluation")
+    parser = argparse.ArgumentParser(description="End-to-end onset / password-boundary evaluation")
     parser.add_argument("--project-root", default="")
     parser.add_argument("--onset-checkpoint", default="results/onset_detector.pt")
     parser.add_argument("--onset-scaler", default="results/onset_scaler.npz")
-    parser.add_argument("--activity-checkpoint", default="results/activity_detector.pt",
-                        help="Activity segmenter checkpoint for Path B")
-    parser.add_argument("--activity-scaler", default="results/activity_scaler.npz")
+    parser.add_argument("--boundary-checkpoint", default="results/password_boundary_detector.pt")
+    parser.add_argument("--boundary-scaler", default="results/password_boundary_scaler.npz")
     parser.add_argument("--classifier-checkpoint", default="results/inception_password_final.pt")
     parser.add_argument("--classifier-scaler", default="results/inception_password_scaler.npz")
     parser.add_argument("--password-dirs", nargs="+", default=["data/raw/password/len_8"])
     parser.add_argument("--test-parts", nargs="+", type=int, default=[17, 18, 19, 20])
-    parser.add_argument("--mixed2-dirs", nargs="*", default=[],
-                        help="mixed2 stream dirs for Path B evaluation")
+    parser.add_argument("--mixed2-dirs", nargs="*", default=[])
     parser.add_argument("--report", default="results/onset_e2e_report.json")
     parser.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
-    parser.add_argument("--threshold", type=float, default=0.5)
-    parser.add_argument("--activity-threshold", type=float, default=0.5)
+    parser.add_argument("--threshold", type=float, default=0.5, help="Onset threshold")
+    parser.add_argument("--boundary-threshold", type=float, default=0.5)
+    parser.add_argument("--boundary-gap-ms", type=float, default=600.0, help="Bridge brief internal pauses inside one password episode.")
     parser.add_argument("--nms-radius-ms", type=float, default=100.0)
     args = parser.parse_args()
 
@@ -920,78 +718,69 @@ def main():
     if args.project_root:
         _setup_project_imports(args.project_root)
         root = os.path.abspath(args.project_root)
-        for attr in ("onset_checkpoint", "onset_scaler",
-                     "activity_checkpoint", "activity_scaler",
-                     "classifier_checkpoint", "classifier_scaler", "report"):
+        for attr in ("onset_checkpoint", "onset_scaler", "boundary_checkpoint", "boundary_scaler", "classifier_checkpoint", "classifier_scaler", "report"):
             val = getattr(args, attr)
             if not os.path.isabs(val):
                 setattr(args, attr, os.path.join(root, val))
-        args.password_dirs = [os.path.join(root, d) if not os.path.isabs(d) else d
-                              for d in args.password_dirs]
-        if args.mixed2_dirs:
-            args.mixed2_dirs = [os.path.join(root, d) if not os.path.isabs(d) else d
-                                for d in args.mixed2_dirs]
+        args.password_dirs = [os.path.join(root, d) if not os.path.isabs(d) else d for d in args.password_dirs]
+        args.mixed2_dirs = [os.path.join(root, d) if not os.path.isabs(d) else d for d in args.mixed2_dirs]
 
-    # Load onset detector
-    onset_model, onset_means, onset_stds, onset_ckpt = load_onset_detector(
-        args.onset_checkpoint, args.onset_scaler, device,
-    )
+    onset_model, onset_means, onset_stds, onset_ckpt = load_detector(args.onset_checkpoint, args.onset_scaler, device)
     print(f"Onset detector: {onset_ckpt.get('model_name', 'cnn')}")
 
-    # Load password classifier
-    classifier, cls_classes, cls_means, cls_stds = load_final_inception(
-        args.classifier_checkpoint, args.classifier_scaler, device,
-    )
-    print(f"Classifier: InceptionTime, {len(cls_classes)} classes")
+    boundary_model, boundary_means, boundary_stds, boundary_ckpt = load_detector(args.boundary_checkpoint, args.boundary_scaler, device)
+    print(f"Password-boundary detector: {boundary_ckpt.get('model_name', 'password_boundary_cnn')}")
 
-    all_results = {}
+    classifier, cls_classes, cls_means, cls_stds = load_final_inception(args.classifier_checkpoint, args.classifier_scaler, device)
+    print(f"Classifier: InceptionTime ({len(cls_classes)} classes)")
 
-    # ── Path A: password sessions ──
+    results = {}
+
     all_sessions = discover_password_sessions(args.password_dirs)
-    test_parts = set(args.test_parts)
-    sessions = [s for s in all_sessions if parse_part(s) in test_parts]
-
+    sessions = [s for s in all_sessions if parse_part(s) in set(args.test_parts)]
     if sessions:
-        print(f"\nPath A: {len(sessions)} password sessions (parts: {sorted(test_parts)})")
-        path_a = eval_e2e_on_sessions(
-            onset_model, onset_means, onset_stds, onset_ckpt,
-            classifier, cls_classes, cls_means, cls_stds,
-            device, sessions,
+        results["path_a_password"] = eval_e2e_on_sessions(
+            onset_model,
+            onset_means,
+            onset_stds,
+            onset_ckpt,
+            classifier,
+            cls_classes,
+            cls_means,
+            cls_stds,
+            device,
+            sessions,
             threshold=args.threshold,
             nms_radius_ms=args.nms_radius_ms,
         )
-        all_results["path_a_password"] = path_a
 
-    # ── Path B: mixed2 streams ──
     if args.mixed2_dirs:
-        # Load activity segmenter
-        if os.path.exists(args.activity_checkpoint):
-            act_model, act_means, act_stds, act_ckpt = load_onset_detector(
-                args.activity_checkpoint, args.activity_scaler, device,
-            )
-            print(f"\nActivity segmenter: {act_ckpt.get('model_name', 'activity_cnn')}")
+        results["path_b_mixed2"] = eval_e2e_on_mixed2(
+            onset_model,
+            onset_means,
+            onset_stds,
+            onset_ckpt,
+            boundary_model,
+            boundary_means,
+            boundary_stds,
+            boundary_ckpt,
+            classifier,
+            cls_classes,
+            cls_means,
+            cls_stds,
+            device,
+            args.mixed2_dirs,
+            onset_threshold=args.threshold,
+            boundary_threshold=args.boundary_threshold,
+            boundary_gap_s=args.boundary_gap_ms / 1000.0,
+            nms_radius_ms=args.nms_radius_ms,
+        )
 
-            path_b = eval_e2e_on_mixed2(
-                onset_model, onset_means, onset_stds, onset_ckpt,
-                act_model, act_means, act_stds, act_ckpt,
-                classifier, cls_classes, cls_means, cls_stds,
-                device,
-                mixed2_dirs=args.mixed2_dirs,
-                onset_threshold=args.threshold,
-                activity_threshold=args.activity_threshold,
-                nms_radius_ms=args.nms_radius_ms,
-            )
-            all_results["path_b_mixed2"] = path_b
-        else:
-            print(f"\n⚠ Activity checkpoint not found: {args.activity_checkpoint}")
-            print(f"  Skipping Path B. Train with: python3 train_onset.py --task activity")
-
-    # Save
     report_dir = os.path.dirname(args.report)
     if report_dir:
         os.makedirs(report_dir, exist_ok=True)
     with open(args.report, "w") as f:
-        json.dump(all_results, f, indent=2)
+        json.dump(results, f, indent=2)
     print(f"\nSaved → {args.report}")
 
 
