@@ -37,6 +37,21 @@
 ### 3. `task=activity`
 保留旧的 keyboard-active 二分类，仅作兼容，不再是主推荐路线。
 
+### 4. `task=password_segment`（并行实验线）
+这是当前新增的两阶段实验方案：
+- Stage 1：二分类 `password_typing vs non_password`
+- Stage 2：在粗定位区间内做 onset + IKI 节奏分析
+- Stage 3：接现有 password classifier 输出 `char_topk / sequence_topN / CER`
+
+它的目标不是替换当前 `password_boundary` 主线，而是作为并行实验线验证：
+- 不直接硬学极少样本的 `password_start / password_end`
+- 改为先粗定位，再利用 password 内部节奏精修边界
+
+对应文件：
+- [password_segment_preprocessor.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_preprocessor.py)
+- [password_segment_detector.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_detector.py)
+- [README_password_segment.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README_password_segment.md)
+
 ---
 
 ## mixed2 协议（当前实际版本）

@@ -232,6 +232,11 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
   - 当前 onset 主任务已经从 generic activity recognition 收缩到：
     - `password_boundary`
     - 即：在 `mixed2` 连续流中精准切出真实 password episode
+  - 同时新增一条并行实验线：
+    - `password_segment`
+    - 先做 `password_typing vs non_password` 粗定位
+    - 再用 onset + IKI 节奏分析精修边界
+    - 最后接现有 password classifier 输出 `top-k / top-N / CER`
   - 当前 `mixed2` 协议是约 `3` 分钟的结构化连续流：
     - `idle -> trackpad_move -> typing_1 -> trackpad_click -> idle -> typing_2 -> shake`
   - `typing_2` 段会接现有 onset detector + password classifier

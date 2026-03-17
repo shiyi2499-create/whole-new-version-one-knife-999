@@ -101,6 +101,23 @@ These files define the active password-route story.
   - `e2e_full` / `e2e_gt_seg` no longer use GT-assisted group alignment
   - `e2e_gt_aligned` remains the explicit oracle baseline
 
+- [onset_detection/password_segment_preprocessor.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_preprocessor.py)
+  - new experimental branch
+  - builds a binary `password_segment` dataset:
+    - positive: `password/len_8`
+    - negatives: `onset_negative + single_key + boost + mixed2 typing_1`
+
+- [onset_detection/password_segment_detector.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_detector.py)
+  - new experimental two-stage Path B branch
+  - logic:
+    - coarse `password vs non_password` region detection
+    - onset extraction within coarse region
+    - IKI / rhythm refinement
+    - final password classifier scoring
+
+- [onset_detection/README_password_segment.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README_password_segment.md)
+  - doc for the experimental `password_segment` branch
+
 - [phase3_password_inception/run_password_closure_inception.py](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/run_password_closure_inception.py)
   - current zero-shot password-route script
   - trains baseline on `single_key + boost`
@@ -171,6 +188,9 @@ These files define the active password-route story.
 
 - `data/processed/password_boundary_dataset.npz`
   - current main dataset for password-centric boundary segmentation
+
+- `data/processed/password_segment_dataset.npz`
+  - experimental binary dataset for the two-stage password-segment branch
 
 ## 3. Current Main Docs
 

@@ -152,6 +152,12 @@ def default_paths_for_task(task: str) -> tuple[str, str, str]:
             "results/password_boundary_scaler.npz",
             "results/password_boundary_training_report.json",
         )
+    if task == "password_segment":
+        return (
+            "results/password_segment_detector.pt",
+            "results/password_segment_scaler.npz",
+            "results/password_segment_training_report.json",
+        )
     if task == "activity":
         return (
             "results/activity_detector.pt",
@@ -425,7 +431,7 @@ def train_onset_detector(
 def main():
     parser = argparse.ArgumentParser(description="Train onset / password-boundary detector")
     parser.add_argument("--dataset", default="data/processed/onset_dataset.npz")
-    parser.add_argument("--task", choices=["onset", "activity", "password_boundary"], default="onset")
+    parser.add_argument("--task", choices=["onset", "activity", "password_boundary", "password_segment"], default="onset")
     parser.add_argument("--model", default="cnn", help="cnn | cnn_large | activity_cnn | password_boundary_cnn")
     parser.add_argument("--checkpoint", default="")
     parser.add_argument("--scaler", default="")
@@ -447,6 +453,8 @@ def main():
 
     if args.task == "password_boundary" and args.dataset == "data/processed/onset_dataset.npz":
         args.dataset = "data/processed/password_boundary_dataset.npz"
+    elif args.task == "password_segment" and args.dataset == "data/processed/onset_dataset.npz":
+        args.dataset = "data/processed/password_segment_dataset.npz"
     elif args.task == "activity" and args.dataset == "data/processed/onset_dataset.npz":
         args.dataset = "data/processed/activity_dataset.npz"
 
