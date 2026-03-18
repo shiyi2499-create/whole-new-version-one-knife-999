@@ -56,6 +56,15 @@ python3 onset_detection/train_onset.py \
 
 `train_onset.py` 已支持 `--task password_segment`，自动映射 default paths 和 dataset。
 
+当前最新状态：
+- Stage 1 在 mixed2 上已经能稳定圈住真实 password 大段
+- 代表性结果：`Episode IoU = 0.967`
+- 当前路线已经证明“先 coarse localization，再 onset/grouping 精修”是可行的
+- 当前主瓶颈已经转移到 Stage 2：
+  - onset 过多
+  - grouping 过碎
+  - 导致 E2E Full 仍明显落后于 GT baseline
+
 ### Step 3: 确保 onset detector 已训练
 
 ```bash
@@ -88,6 +97,15 @@ python3 onset_detection/password_segment_detector.py \
 - **Boundary**: episode_iou / episode_precision / episode_recall / start_error_ms / end_error_ms
 - **E2E Full**: char_top1 / char_top3 / char_top5 / sequence_top10 / sequence_top50 / sequence_top100 / CER
 - **GT Baseline**: 同上（作为 oracle 参照）
+
+当前 mixed2 最新代表性结果：
+- `Episode IoU = 0.967`
+- `E2E Full` 仍较弱，说明 Stage 2 onset/grouping 还需要收紧
+- `GT Baseline` 已提升到：
+  - `char_top1 = 57.5%`
+  - `char_top3 = 82.5%`
+  - `char_top5 = 87.5%`
+  - `CER = 42.5%`
 
 ---
 
@@ -141,6 +159,13 @@ python3 onset_detection/onset_collector.py \
 
 加入 `typing_1` 作为 hard negative 迫使模型学到 password typing 和 free typing 的区别。
 
+此外，`password_segment_preprocessor.py` 现在会对 source 做 balancing：
+- 压低 `single_key_neg`
+- 抬高 `negative_freetyping`
+- 抬高 `mixed2_free_typing`
+
+这样 Stage 1 才不会继续被明显的 non-password 背景主导。
+
 ### Stage 2 IKI 节奏分析
 
 Password 打字节奏特征：
@@ -162,3 +187,14 @@ Password 打字节奏特征：
 
 评估同时输出 e2e_full（完全预测链路）和 gt_baseline（GT onset）两组结果，
 方便看 Stage 1+2 引入了多少降级。
+
+### 当前真正的剩余问题
+
+现在已经不是“这条路线对不对”的问题，而是：
+
+1. Stage 1 已经基本成立
+2. classifier 也已经重新对齐到 `36` 类并支持 adaptation
+3. 当前主要瓶颈集中在 Stage 2：
+   - onset threshold 偏松
+   - NMS 偏松
+   - rhythm/grouping 还会拆出过多 password groups

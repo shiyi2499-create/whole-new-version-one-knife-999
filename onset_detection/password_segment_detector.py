@@ -58,6 +58,22 @@ from password_segment_preprocessor import (
 _classifier_imported = False
 
 
+def _remap_legacy_onset_state_dict(state_dict: dict) -> dict:
+    """
+    Support older onset checkpoints whose encoder was stored under
+    ``features.*`` instead of ``encoder.net.*``.
+    """
+    if any(k.startswith("encoder.net.") for k in state_dict):
+        return state_dict
+    remapped = {}
+    for key, value in state_dict.items():
+        if key.startswith("features."):
+            remapped["encoder.net." + key[len("features."):]] = value
+        else:
+            remapped[key] = value
+    return remapped
+
+
 def _setup_imports(project_root: str = ""):
     global _classifier_imported
     if _classifier_imported:
@@ -241,7 +257,8 @@ def load_onset_detector(checkpoint_path, scaler_path, device):
         n_classes=int(ckpt.get("n_classes", 1)),
         task=ckpt.get("task", "onset"),
     )
-    model.load_state_dict(ckpt["model_state"])
+    model_state = _remap_legacy_onset_state_dict(ckpt["model_state"])
+    model.load_state_dict(model_state)
     model.to(device).eval()
     scaler = np.load(scaler_path)
     meta = {"window_ms": int(ckpt.get("window_ms", DEFAULT_WINDOW_MS)),

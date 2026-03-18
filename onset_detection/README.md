@@ -50,6 +50,15 @@
   - standalone split 上该任务很容易“看起来很好”
   - 但 mixed2 上真正困难的是 **`password` vs `typing_1 / freetyping`**
   - 所以当前最重要的补采目标不是继续加明显非 password 的背景，而是补更多 `freetyping`
+  - 当前最新进展：
+    - Stage 1 经 `freetyping` 补采 + source balancing 后，mixed2 上 `Episode IoU = 0.967`
+    - 说明 coarse password region extraction 已经基本成立
+    - 当前主瓶颈已转移到 Stage 2 onset / grouping 过松
+    - 使用 `36` 类 baseline + `len=8` adaptation 后，mixed2 上 GT baseline 已达到：
+      - `char_top1 = 57.5%`
+      - `char_top3 = 82.5%`
+      - `char_top5 = 87.5%`
+      - `CER = 42.5%`
 
 对应文件：
 - [password_segment_preprocessor.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_preprocessor.py)
@@ -148,6 +157,12 @@ python3 onset_detection/onset_collector.py \
   - `password`
   vs
   - `free typing`
+
+现在 `password_segment_preprocessor.py` 已加入 source balancing：
+- `single_key_neg` 会被 cap
+- `negative_freetyping` / `mixed2_free_typing` 会被抬高
+
+这是当前 Stage 1 能在 mixed2 上真正起作用的关键原因之一。
 
 ---
 

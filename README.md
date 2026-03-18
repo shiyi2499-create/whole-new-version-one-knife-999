@@ -216,12 +216,14 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
     - `sequence_top100 = 46.5% ± 5.1%`
     - `CER = 32.7% ± 1.0%`
   - 固定 `160/40` split 最佳单次结果：
-    - `char_top1 = 73.4%`
-    - `char_top3 = 97.8%`
+    - `char_top1 = 73.8%`
+    - `char_top3 = 96.9%`
     - `char_top5 = 99.1%`
-    - `sequence_top100 = 65.0%`
-    - `CER = 26.6%`
+    - `sequence_top100 = 67.5%`
+    - `CER = 26.2%`
   - 指标：`char top-1/top-3/top-5`、`sequence top-10/top-50/top-100`、`CER`
+  - 当前 `adapt_password_len8_inception.py` 已会把 adapted classifier 直接写回
+    `results/inception_password_final.pt`
 - 🟨【进行中】Step 5: onset / password-boundary 模块
   - 当前已经有独立 [onset_detection/README.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README.md) 模块
   - 原始 onset detector 第一轮结果：
@@ -246,6 +248,20 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
     - 但在 mixed2 上，真正困难的是 **`password typing` vs `free typing`**
     - 因此当前最重要的新补采不是继续加 `single_key`
     - 而是补 `data/raw/onset_negative/freetyping/`
+  - 当前最新进展：
+    - `freetyping` 补采 + Stage 1 source balancing 已经生效
+    - `password_segment` 在 mixed2 上已经能稳定圈住真实 password 大段：
+      - `Episode IoU = 0.967`
+    - 正确的 `36` 类 baseline + `len=8` adaptation 已重新打通
+    - mixed2 上的 `GT baseline` 已提升到：
+      - `char_top1 = 57.5%`
+      - `char_top3 = 82.5%`
+      - `char_top5 = 87.5%`
+      - `CER = 42.5%`
+    - 这说明当前路线没有偏离，**password coarse localization 这条线已经被验证是走得通的**
+    - 当前主瓶颈已经转移到：
+      - Stage 2 onset / grouping 太松
+      - 候选 onset 过多，per-password 分组过碎
 - 🟥【待办】Step 6: `len=9 / len=10` password 扩展
   - 目标：验证长度增长后 top-k / top-N 的退化曲线
 - 🟥【待办】Step 7: 符号与大写扩展
@@ -271,7 +287,7 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 - `sentence` / 自然语言恢复保留，但暂不作为当前 headline
 - 当前结果已经足以支撑一个受控 password-style continuous-string 攻击故事
 - onset 现在已经进入实现与训练阶段；下一阶段最值钱的是：
-  - `mixed2` 上的 `password_boundary` 训练与 boundary evaluation
+  - `mixed2` 上继续收紧 Stage 2 onset / grouping
   - 更多 `freetyping` hard negative
   - 更多长度
   - 更多设备 / 更多用户
@@ -313,6 +329,14 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 2. `keyboard onset`
    - 辅助任务
    - 用于在已经切出的 password episode 内定位单个按键时刻
+
+当前并行实验线 `password_segment` 的阶段性结论是：
+
+- Stage 1 coarse localization 已经基本成立
+- 当前不是大方向错了
+- 主要剩余问题集中在 Stage 2：
+  - onset threshold / NMS / grouping 还需要继续收紧
+  - 目标是把 `5` 条 password 拆干净，而不是炸出过多 groups/onsets
 
 ### 当前新增共识：为什么要补 `freetyping`
 

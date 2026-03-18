@@ -351,6 +351,21 @@ def main():
         seq_hit_cutoffs=(10, 50, 100),
     )
 
+    os.makedirs(os.path.dirname(args.checkpoint_path), exist_ok=True)
+    torch.save({
+        "model_state": model.state_dict(),
+        "n_timesteps": int(X_adapt.shape[1]),
+        "n_channels": int(X_adapt.shape[2]),
+        "n_classes": int(len(classes)),
+        "classes": classes,
+        "model_name": "InceptionTime",
+        "adapted_from_password_len8": True,
+        "adapt_parts": sorted(adapt_parts),
+        "test_parts": sorted(test_parts),
+    }, args.checkpoint_path)
+    if not os.path.exists(args.scaler_path):
+        np.savez(args.scaler_path, means=means, stds=stds)
+
     report = {
         "device": str(device),
         "merged_path": args.merged_path,
@@ -379,6 +394,7 @@ def main():
     print(f"  char_top5: {adapted_metrics['char_top5_accuracy']:.1%}")
     print(f"  seq_top100: {adapted_metrics['sequence_top100_hit_rate']:.1%}")
     print(f"  CER: {adapted_metrics['cer_top1']:.1%}")
+    print(f"Saved adapted checkpoint -> {args.checkpoint_path}")
     print(f"Saved -> {args.report_path}")
 
 

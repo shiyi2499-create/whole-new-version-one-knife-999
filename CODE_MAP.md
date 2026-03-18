@@ -107,7 +107,11 @@ These files define the active password-route story.
   - builds a binary `password_segment` dataset:
     - positive: `password/len_8`
     - negatives: `onset_negative + single_key + boost + mixed2 typing_1`
-  - current main pain point:
+  - now includes source balancing:
+    - caps `single_key_neg`
+    - lifts `negative_freetyping`
+    - lifts `mixed2_free_typing`
+  - current main lesson:
     - if `freetyping` is too scarce, Stage 1 mainly learns `password` vs obvious non-password background
     - not `password` vs real free typing
 
@@ -119,6 +123,9 @@ These files define the active password-route story.
     - IKI / rhythm refinement
     - final password classifier scoring
   - GT baseline handling has been tightened to use per-password supported-character groups
+  - current status:
+    - coarse localization on mixed2 is now working (`Episode IoU ≈ 0.967`)
+    - main remaining bottleneck is Stage 2 onset/grouping over-triggering
 
 - [onset_detection/README_password_segment.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README_password_segment.md)
   - doc for the experimental `password_segment` branch
@@ -135,6 +142,8 @@ These files define the active password-route story.
     - adapt parts `1-16`
     - test parts `17-20`
   - automatically ignores older duplicate/incomplete sessions for the same part
+  - now saves the adapted model back to `--checkpoint-path`, so downstream
+    onset/password-segment evaluation can load the adapted classifier directly
 
 - [multisplit_password_len8_inception.py](/Users/shiyi/备份（mac_vs专用）/multisplit_password_len8_inception.py)
   - repeated group-split evaluation for:
