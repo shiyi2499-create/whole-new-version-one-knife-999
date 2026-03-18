@@ -63,6 +63,7 @@ These files define the active password-route story.
   - onset-specific collector
   - supports:
     - negative nuisance motions
+    - `freetyping` negative collection with `events.csv`
     - `mixed`
     - structured `mixed2` ~3-minute protocol
   - current practical order:
@@ -106,6 +107,9 @@ These files define the active password-route story.
   - builds a binary `password_segment` dataset:
     - positive: `password/len_8`
     - negatives: `onset_negative + single_key + boost + mixed2 typing_1`
+  - current main pain point:
+    - if `freetyping` is too scarce, Stage 1 mainly learns `password` vs obvious non-password background
+    - not `password` vs real free typing
 
 - [onset_detection/password_segment_detector.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_detector.py)
   - new experimental two-stage Path B branch
@@ -114,6 +118,7 @@ These files define the active password-route story.
     - onset extraction within coarse region
     - IKI / rhythm refinement
     - final password classifier scoring
+  - GT baseline handling has been tightened to use per-password supported-character groups
 
 - [onset_detection/README_password_segment.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README_password_segment.md)
   - doc for the experimental `password_segment` branch
@@ -170,6 +175,7 @@ These files define the active password-route story.
     - `trackpad_move`
     - `trackpad_click`
     - `shake`
+    - `freetyping`
 
 - `data/raw/onset_mixed2`
   - current structured ~3-minute mixed-stream collection directory

@@ -241,6 +241,11 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
     - `idle -> trackpad_move -> typing_1 -> trackpad_click -> idle -> typing_2 -> shake`
   - `typing_2` 段会接现有 onset detector + password classifier
   - 当前 `e2e_full` 已经去掉 GT-assisted group alignment；`e2e_gt_aligned` 保留为显式 oracle baseline
+  - 当前已经定位到的主要问题：
+    - `password_segment` 在 standalone split 上很容易做得“过好”
+    - 但在 mixed2 上，真正困难的是 **`password typing` vs `free typing`**
+    - 因此当前最重要的新补采不是继续加 `single_key`
+    - 而是补 `data/raw/onset_negative/freetyping/`
 - 🟥【待办】Step 6: `len=9 / len=10` password 扩展
   - 目标：验证长度增长后 top-k / top-N 的退化曲线
 - 🟥【待办】Step 7: 符号与大写扩展
@@ -267,6 +272,7 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 - 当前结果已经足以支撑一个受控 password-style continuous-string 攻击故事
 - onset 现在已经进入实现与训练阶段；下一阶段最值钱的是：
   - `mixed2` 上的 `password_boundary` 训练与 boundary evaluation
+  - 更多 `freetyping` hard negative
   - 更多长度
   - 更多设备 / 更多用户
 
@@ -307,6 +313,23 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 2. `keyboard onset`
    - 辅助任务
    - 用于在已经切出的 password episode 内定位单个按键时刻
+
+### 当前新增共识：为什么要补 `freetyping`
+
+目前第一阶段最容易学到的是：
+- `password`
+vs
+- 明显不像 password 的背景（idle / trackpad / shake / single_key）
+
+但 mixed2 里真正最难的不是这些，而是：
+- `password typing`
+vs
+- `typing_1 / free typing`
+
+所以当前最重要的新采集是：
+- `data/raw/onset_negative/freetyping/`
+
+推荐直接单独采集，而不是完全依赖 mixed2 里的 `typing_1`。
 
 ### 当前 mixed2 demo 协议
 

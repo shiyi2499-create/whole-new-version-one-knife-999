@@ -69,6 +69,80 @@ def _setup_imports(project_root: str = ""):
     _classifier_imported = True
 
 
+def _load_press_rows(events_path: str) -> list[dict]:
+    rows = []
+    if not os.path.exists(events_path):
+        return rows
+    with open(events_path, newline="") as f:
+        for row in csv.DictReader(f):
+            if row.get("event_type") != "press":
+                continue
+            try:
+                ts = int(row["timestamp_ns"])
+            except Exception:
+                continue
+            rows.append({"timestamp_ns": ts, "key": (row.get("key") or "").lower()})
+    return rows
+
+
+def _load_supported_press_timestamps(events_path: str) -> np.ndarray:
+    from run_password_closure_inception import supported_key
+
+    keep = []
+    for row in _load_press_rows(events_path):
+        key = row["key"]
+        if key in {"shift", "capslock", "ctrl", "alt", "cmd", "tab", "esc",
+                   "left", "right", "up", "down", "delete", "enter", "return",
+                   "space", "backspace"}:
+            continue
+        if not supported_key(key):
+            continue
+        keep.append(row["timestamp_ns"])
+    return np.asarray(keep, dtype=np.int64)
+
+
+def _extract_gt_password_groups(events_path: str, gt_refined_segs: list[dict]) -> list[list[int]]:
+    """
+    Split GT password typing into per-password groups using Enter as delimiter.
+
+    We keep only classifier-supported character keys inside each group, and we
+    drop spaces/backspaces/modifiers so the GT baseline matches the main
+    password-classifier evaluation path more closely.
+    """
+    from run_password_closure_inception import supported_key
+
+    rows = _load_press_rows(events_path)
+    if not rows:
+        return []
+
+    all_groups: list[list[int]] = []
+    for seg in gt_refined_segs:
+        seg_rows = [
+            r for r in rows
+            if int(seg["start_time_ns"]) <= r["timestamp_ns"] <= int(seg["end_time_ns"])
+        ]
+        cur: list[int] = []
+        for row in seg_rows:
+            key = row["key"]
+            ts = row["timestamp_ns"]
+            if key in {"shift", "capslock", "ctrl", "alt", "cmd", "tab", "esc",
+                       "left", "right", "up", "down", "delete"}:
+                continue
+            if key in {"enter", "return"}:
+                if cur:
+                    all_groups.append(cur.copy())
+                    cur = []
+                continue
+            if key in {"space", "backspace"}:
+                continue
+            if not supported_key(key):
+                continue
+            cur.append(ts)
+        if cur:
+            all_groups.append(cur.copy())
+    return all_groups
+
+
 # ── Stage 1: Binary Segment Classifier ──────────────────────
 
 @dataclass
@@ -356,7 +430,7 @@ def run_full_pipeline(
     onset_model, onset_means, onset_stds, onset_meta,
     classifier, cls_classes, cls_means, cls_stds,
     device,
-    gt_passwords, gt_refined_segs,
+    gt_passwords, gt_refined_segs, gt_password_groups_ns,
     segment_threshold=0.5, onset_threshold=0.5,
     expected_password_len=8,
 ):
@@ -408,8 +482,6 @@ def run_full_pipeline(
     # GT baseline: use GT onset times directly
     e2e_results = []
     gt_results = []
-    events_path = sess_prefix + "_events.csv"
-    gt_events = load_events_csv(events_path, press_only=True) if os.path.exists(events_path) else np.array([], dtype=np.int64)
 
     for pw_idx, ref in enumerate(gt_passwords):
         # E2E full: predicted groups
@@ -425,9 +497,8 @@ def run_full_pipeline(
         e2e_results.append(e2e_r)
 
         # GT baseline: GT onset times within GT segment
-        if pw_idx < len(gt_refined_segs):
-            seg = gt_refined_segs[pw_idx]
-            gt_in = gt_events[(gt_events >= int(seg["start_time_ns"])) & (gt_events <= int(seg["end_time_ns"]))].tolist()
+        if pw_idx < len(gt_password_groups_ns):
+            gt_in = gt_password_groups_ns[pw_idx]
             gt_r = score_one_password(
                 gt_in, ref, sensor,
                 classifier, cls_classes, cls_means, cls_stds, device, target_rate_hz)
@@ -526,7 +597,7 @@ def main():
             continue
         sensor = load_sensor_csv(sess + "_sensor.csv")
         activity_segments = load_activity_log(alog)
-        events = load_events_csv(events_path) if os.path.exists(events_path) else np.array([], dtype=np.int64)
+        events = _load_supported_press_timestamps(events_path) if os.path.exists(events_path) else np.array([], dtype=np.int64)
         gt_refined = refine_password_segments_with_events(activity_segments, events)
         if not gt_refined:
             continue
@@ -538,13 +609,15 @@ def main():
         if not gt_passwords:
             continue
 
+        gt_password_groups = _extract_gt_password_groups(events_path, gt_refined) if os.path.exists(events_path) else []
+
         print(f"  Session: {os.path.basename(sess)}  ({len(gt_passwords)} passwords)")
         result = run_full_pipeline(
             sensor, sess,
             seg_model, seg_means, seg_stds, seg_meta,
             onset_model, onset_means, onset_stds, onset_meta,
             classifier, cls_classes, cls_means, cls_stds,
-            device, gt_passwords, gt_refined,
+            device, gt_passwords, gt_refined, gt_password_groups,
             segment_threshold=args.segment_threshold,
             onset_threshold=args.onset_threshold,
             expected_password_len=args.expected_password_len,

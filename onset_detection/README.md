@@ -46,6 +46,10 @@
 它的目标不是替换当前 `password_boundary` 主线，而是作为并行实验线验证：
 - 不直接硬学极少样本的 `password_start / password_end`
 - 改为先粗定位，再利用 password 内部节奏精修边界
+- 当前已知瓶颈：
+  - standalone split 上该任务很容易“看起来很好”
+  - 但 mixed2 上真正困难的是 **`password` vs `typing_1 / freetyping`**
+  - 所以当前最重要的补采目标不是继续加明显非 password 的背景，而是补更多 `freetyping`
 
 对应文件：
 - [password_segment_preprocessor.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_preprocessor.py)
@@ -108,8 +112,42 @@
 - `trackpad_move`
 - `trackpad_click`
 - `shake`
+- `freetyping`
 
 这些都作为普通 `non_password` 背景。
+
+### freetyping（新增重点负样本）
+现在 `freetyping` 被视为 Stage 1 最重要的 hard negative。
+
+推荐直接单独采集到：
+- `data/raw/onset_negative/freetyping/`
+
+采集命令：
+
+```bash
+python3 onset_detection/onset_collector.py \
+  --mode negative \
+  --activity freetyping \
+  --duration 60 \
+  --project-root .
+```
+
+该模式会同时保存：
+- `*_sensor.csv`
+- `*_events.csv`
+- `*_meta.json`
+
+之所以单独保留 `events.csv`，是因为后续如果要分析 free typing 的 IKI / Enter / Backspace 节奏，就不需要重采。
+
+当前判断：
+- 如果没有足够的 `freetyping`，Stage 1 往往只会学会区分
+  - `password`
+  vs
+  - `idle / trackpad / shake / single_key`
+- 却学不会真正关键的
+  - `password`
+  vs
+  - `free typing`
 
 ---
 

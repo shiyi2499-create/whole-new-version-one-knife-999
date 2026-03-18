@@ -4,7 +4,7 @@ Onset Data Collector
 Collect negative-sample and mixed-stream sessions for onset detection.
 
 Three modes:
-  1. negative  – Record a single activity type (idle, trackpad_move, etc.)
+  1. negative  – Record a single activity type (idle, trackpad_move, freetyping, etc.)
   2. mixed     – Record a scripted sequence of random interleaved activities
   3. mixed2    – Record the structured ~3-minute protocol:
                  idle → trackpad_move → typing_1 (free) → trackpad_click →
@@ -15,6 +15,7 @@ Reuses the existing sensor_reader / spu_backend / keyboard_listener stack.
 
 Run:
   python3 onset_collector.py --mode negative --activity idle --duration 60
+  python3 onset_collector.py --mode negative --activity freetyping --duration 60
   python3 onset_collector.py --mode mixed --n-segments 15 --segment-sec 30
   python3 onset_collector.py --mode mixed2 --n-trials 5
 
@@ -63,6 +64,7 @@ ACTIVITIES = [
     "trackpad_click",
     "shake",
     "desk_bump",
+    "freetyping",
     "keyboard",
 ]
 
@@ -124,26 +126,45 @@ def run_negative_mode(
     session_id = f"{participant}_onset_neg_{activity}_{tag}"
     sensor_path = os.path.join(out_dir, f"{session_id}_sensor.csv")
     meta_path = os.path.join(out_dir, f"{session_id}_meta.json")
+    events_path = os.path.join(out_dir, f"{session_id}_events.csv")
 
     sensor = SensorReader()
     sensor.start()
+    keyboard = None
+    ef = None
+    ew = None
+    event_count = 0
+    if activity == "freetyping":
+        keyboard = KeyboardListener()
+        keyboard.start()
 
     print(f"\n{'='*60}")
     print(f"  ONSET NEGATIVE COLLECTION")
     print(f"  Activity:  {activity}")
     print(f"  Duration:  {duration_sec:.0f}s")
     print(f"  Output:    {sensor_path}")
+    if activity == "freetyping":
+        print(f"  Events:    {events_path}")
     print(f"{'='*60}\n")
 
     print(f"  Warming up sensor ({precheck_sec:.0f}s)...")
     time.sleep(precheck_sec)
     sensor.drain()
+    if keyboard is not None:
+        keyboard.drain()
+        ef, ew = open_events_csv(events_path)
 
     sf, sw = open_sensor_csv(sensor_path)
     sample_count = 0
 
-    print(f"  🔴 NOW: perform [{activity}] for {duration_sec:.0f}s")
-    print(f"     (press Ctrl+C to stop early)\n")
+    if activity == "freetyping":
+        print(f"  🔴 现在开始 [自由敲击]，持续 {duration_sec:.0f} 秒")
+        print(f"     随意输入单词、短句、乱打字都可以，不要刻意模仿 password")
+        print(f"     可以自然地按 Enter / Backspace / Space")
+        print(f"     （按 Ctrl+C 可提前停止）\n")
+    else:
+        print(f"  🔴 NOW: perform [{activity}] for {duration_sec:.0f}s")
+        print(f"     (press Ctrl+C to stop early)\n")
 
     t_start = time.time()
     try:
@@ -152,11 +173,21 @@ def run_negative_mode(
             if samples:
                 write_sensor_rows(sw, samples)
                 sample_count += len(samples)
+            if keyboard is not None:
+                events = keyboard.drain()
+                if events:
+                    write_event_rows(ew, events, participant, session_id)
+                    event_count += len(events)
             elapsed = time.time() - t_start
             remaining = max(0, duration_sec - elapsed)
-            print(f"\r  [{elapsed:.0f}s / {duration_sec:.0f}s]  "
-                  f"samples={sample_count:,}  remaining={remaining:.0f}s  ",
-                  end="", flush=True)
+            if keyboard is not None:
+                print(f"\r  [{elapsed:.0f}s / {duration_sec:.0f}s]  "
+                      f"samples={sample_count:,}  events={event_count:,}  remaining={remaining:.0f}s  ",
+                      end="", flush=True)
+            else:
+                print(f"\r  [{elapsed:.0f}s / {duration_sec:.0f}s]  "
+                      f"samples={sample_count:,}  remaining={remaining:.0f}s  ",
+                      end="", flush=True)
             time.sleep(0.1)
     except KeyboardInterrupt:
         print("\n  Stopped early by user.")
@@ -165,10 +196,20 @@ def run_negative_mode(
     if samples:
         write_sensor_rows(sw, samples)
         sample_count += len(samples)
+    if keyboard is not None:
+        events = keyboard.drain()
+        if events:
+            write_event_rows(ew, events, participant, session_id)
+            event_count += len(events)
 
     sf.flush()
     sf.close()
     sensor.stop()
+    if ef is not None:
+        ef.flush()
+        ef.close()
+    if keyboard is not None:
+        keyboard.stop()
 
     elapsed = time.time() - t_start
     rate = sample_count / max(elapsed, 0.1)
@@ -182,11 +223,19 @@ def run_negative_mode(
         "avg_rate_hz": rate,
         "participant": participant,
     }
+    if activity == "freetyping":
+        meta["event_count"] = event_count
+        meta["events_path"] = events_path
     with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
 
-    print(f"\n\n  ✓ Done: {sample_count:,} samples in {elapsed:.1f}s ({rate:.1f} Hz)")
-    print(f"  Saved → {sensor_path}")
+    if activity == "freetyping":
+        print(f"\n\n  ✓ Done: {sample_count:,} samples + {event_count:,} key events in {elapsed:.1f}s ({rate:.1f} Hz)")
+        print(f"  Saved → {sensor_path}")
+        print(f"  Events → {events_path}")
+    else:
+        print(f"\n\n  ✓ Done: {sample_count:,} samples in {elapsed:.1f}s ({rate:.1f} Hz)")
+        print(f"  Saved → {sensor_path}")
     print(f"  Meta  → {meta_path}\n")
 
 

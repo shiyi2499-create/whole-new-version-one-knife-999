@@ -28,9 +28,15 @@ python3 onset_detection/password_segment_preprocessor.py \
 数据来源：
 - **正样本 (label=1)**：`password/len_8` 全部 session
 - **负样本 (label=0)**：
-  - `onset_negative`（idle / trackpad / shake）
+  - `onset_negative`（idle / trackpad / shake / freetyping）
   - `single_key` + `boost`（keyboard but not password）
   - **`mixed2` 的 `typing_1` 段**（free typing hard negative）← 关键新增
+
+当前已知问题：
+- standalone split 上该任务非常容易，不代表 mixed2 上一定可用
+- 当前真正困难的不是 `password` vs `idle/trackpad/shake`
+- 而是 **`password` vs `free typing`**
+- 因此当前最重要的补采不是继续加 `single_key`，而是补更多 `freetyping`
 
 ### Step 2: 训练 binary segment detector
 
@@ -104,6 +110,35 @@ python3 onset_detection/password_segment_detector.py \
 
 `typing_1`（free typing）是 mixed2 协议中最容易和 password typing 混淆的段。
 如果 Stage 1 只用 idle/trackpad/shake 作为负样本，模型会把所有 keyboard 活动都判成 positive。
+
+建议额外采集：
+
+```bash
+python3 onset_detection/onset_collector.py \
+  --mode negative \
+  --activity freetyping \
+  --duration 60 \
+  --project-root .
+```
+
+数据会保存到：
+- `data/raw/onset_negative/freetyping/`
+
+该模式会同时记录：
+- `*_sensor.csv`
+- `*_events.csv`
+- `*_meta.json`
+
+当前判断：
+- 如果没有足够的 `freetyping`，Stage 1 往往只会学会区分
+  - `password`
+  vs
+  - 明显非 password 的背景
+- 却学不会真正关键的
+  - `password`
+  vs
+  - `free typing`
+
 加入 `typing_1` 作为 hard negative 迫使模型学到 password typing 和 free typing 的区别。
 
 ### Stage 2 IKI 节奏分析
