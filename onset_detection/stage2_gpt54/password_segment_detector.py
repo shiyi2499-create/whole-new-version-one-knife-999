@@ -25,6 +25,11 @@ from typing import Optional
 import numpy as np
 import torch
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+PARENT_ONSET_DIR = os.path.dirname(HERE)
+if PARENT_ONSET_DIR not in sys.path:
+    sys.path.insert(0, PARENT_ONSET_DIR)
+
 from onset_model import build_onset_model
 from onset_preprocessor import (
     DEFAULT_TARGET_RATE_HZ,
@@ -959,6 +964,274 @@ def classify_windows(windows, classifier, means, stds, device):
     return out
 
 
+def _classifier_window_quality(prob: Optional[np.ndarray]) -> float:
+    if prob is None:
+        return -8.0
+    p = np.asarray(prob, dtype=np.float64)
+    if p.ndim != 1 or len(p) == 0:
+        return -8.0
+    ranked = np.sort(p)[::-1]
+    top1 = float(ranked[0])
+    top2 = float(ranked[1]) if len(ranked) > 1 else 0.0
+    margin = top1 - top2
+    entropy = -float(np.sum(p * np.log(np.clip(p, 1e-8, 1.0)))) / max(np.log(len(p)), 1e-6)
+    return float(np.log(top1 + 1e-8) + 0.35 * margin - 0.15 * entropy)
+
+
+def _score_password_groups_classifier_global(
+    sensor,
+    password_groups_s,
+    classifier,
+    cls_means,
+    cls_stds,
+    device,
+    target_rate_hz,
+):
+    flat_onsets_ns = []
+    slices = []
+    cursor = 0
+    for group in password_groups_s:
+        onset_ns = [int(float(t) * 1e9) for t in group]
+        flat_onsets_ns.extend(onset_ns)
+        slices.append((cursor, cursor + len(onset_ns)))
+        cursor += len(onset_ns)
+
+    windows = cut_classifier_windows(sensor, flat_onsets_ns, target_rate_hz=target_rate_hz)
+    probs = classify_windows(windows, classifier, cls_means, cls_stds, device)
+
+    group_debug = []
+    total_score = 0.0
+    total_valid = 0
+    for gi, (lo, hi) in enumerate(slices):
+        group_probs = probs[lo:hi]
+        slot_scores = [_classifier_window_quality(p) for p in group_probs]
+        valid = sum(1 for p in group_probs if p is not None)
+        invalid = len(group_probs) - valid
+        total_valid += valid
+        group_score = float(np.sum(slot_scores) - 1.5 * invalid)
+        total_score += group_score
+        group_debug.append({
+            "group_index": int(gi),
+            "n_slots": int(len(group_probs)),
+            "n_valid_windows": int(valid),
+            "n_invalid_windows": int(invalid),
+            "slot_scores": [float(x) for x in slot_scores],
+            "group_classifier_score": float(group_score),
+        })
+
+    return {
+        "classifier_score": float(total_score),
+        "n_total_windows": int(len(flat_onsets_ns)),
+        "n_valid_windows": int(total_valid),
+        "groups": group_debug,
+    }
+
+
+def _normalize_scores(values):
+    arr = np.asarray(values, dtype=np.float64)
+    if len(arr) == 0:
+        return arr
+    mean = float(arr.mean())
+    std = float(arr.std())
+    if std < 1e-6:
+        return np.zeros_like(arr)
+    return (arr - mean) / std
+
+
+def _rerank_group_with_classifier(
+    sensor,
+    group_times_s,
+    group_key_indices,
+    segment_patch_range,
+    patch_times_s,
+    key_score_curve,
+    classifier,
+    cls_means,
+    cls_stds,
+    device,
+    target_rate_hz,
+    search_radius_patches=3,
+    per_slot_topk=5,
+    min_iki_s=0.08,
+    max_iki_s=1.8,
+):
+    if not group_key_indices or not segment_patch_range:
+        return group_times_s, {"slot_scores": [], "changed_slots": 0}
+
+    seg_lo, seg_hi = int(segment_patch_range[0]), int(segment_patch_range[1])
+    seg_lo = max(0, seg_lo)
+    seg_hi = min(len(patch_times_s) - 1, seg_hi)
+    if seg_hi < seg_lo:
+        return group_times_s, {"slot_scores": [], "changed_slots": 0}
+
+    cache: dict[int, tuple[float, float]] = {}
+
+    def candidate_score(idx: int) -> tuple[float, float]:
+        idx = int(idx)
+        if idx in cache:
+            return cache[idx]
+        onset_ns = [int(float(patch_times_s[idx]) * 1e9)]
+        windows = cut_classifier_windows(sensor, onset_ns, target_rate_hz=target_rate_hz)
+        probs = classify_windows(windows, classifier, cls_means, cls_stds, device)
+        p = probs[0]
+        if p is None:
+            cls_score = -20.0
+        else:
+            cls_score = float(np.log(np.max(p) + 1e-8))
+        key_term = float(np.log(max(float(key_score_curve[idx]), 1e-6)))
+        score = cls_score + 0.25 * key_term
+        cache[idx] = (score, cls_score)
+        return cache[idx]
+
+    candidate_lists = []
+    slot_debug = []
+    for base_idx in group_key_indices:
+        lo = max(seg_lo, int(base_idx) - search_radius_patches)
+        hi = min(seg_hi, int(base_idx) + search_radius_patches)
+        cand = np.arange(lo, hi + 1, dtype=np.int64)
+        cand = np.unique(np.concatenate([cand, np.asarray([int(base_idx)], dtype=np.int64)]))
+        cand = np.asarray(sorted(cand.tolist()), dtype=np.int64)
+        cand_scores = np.asarray([candidate_score(int(i))[0] for i in cand], dtype=np.float64)
+        if len(cand) > per_slot_topk:
+            keep = np.argpartition(cand_scores, -per_slot_topk)[-per_slot_topk:]
+            cand = np.sort(cand[keep])
+        candidate_lists.append(cand.tolist())
+        slot_debug.append({
+            "base_idx": int(base_idx),
+            "candidate_indices": [int(i) for i in cand.tolist()],
+            "candidate_times_s": [float(patch_times_s[int(i)]) for i in cand.tolist()],
+        })
+
+    K = len(candidate_lists)
+    dp = []
+    prev = []
+    for pos in range(K):
+        n = len(candidate_lists[pos])
+        dp.append(np.full((n,), -1e18, dtype=np.float64))
+        prev.append(np.full((n,), -1, dtype=np.int64))
+
+    for j, idx in enumerate(candidate_lists[0]):
+        dp[0][j] = candidate_score(int(idx))[0]
+
+    target_gap = 0.0
+    if len(group_key_indices) >= 2:
+        base_times = [float(patch_times_s[int(i)]) for i in group_key_indices]
+        target_gap = float(np.median(np.diff(base_times)))
+
+    for pos in range(1, K):
+        for j, idx_j in enumerate(candidate_lists[pos]):
+            t_j = float(patch_times_s[int(idx_j)])
+            best_score = -1e18
+            best_i = -1
+            for i, idx_i in enumerate(candidate_lists[pos - 1]):
+                t_i = float(patch_times_s[int(idx_i)])
+                gap = t_j - t_i
+                if gap < min_iki_s or gap > max_iki_s:
+                    continue
+                gap_pen = 0.0
+                if target_gap > 0:
+                    gap_pen = -0.15 * ((gap - target_gap) / max(target_gap, 1e-6)) ** 2
+                score = dp[pos - 1][i] + candidate_score(int(idx_j))[0] + gap_pen
+                if score > best_score:
+                    best_score = score
+                    best_i = i
+            dp[pos][j] = best_score
+            prev[pos][j] = best_i
+
+    end_idx = int(np.argmax(dp[-1]))
+    if dp[-1][end_idx] < -1e17:
+        return group_times_s, {"slot_scores": slot_debug, "changed_slots": 0, "fallback": True}
+
+    chosen = []
+    cur = end_idx
+    for pos in range(K - 1, -1, -1):
+        chosen.append(int(candidate_lists[pos][cur]))
+        cur = int(prev[pos][cur])
+        if pos > 0 and cur < 0:
+            return group_times_s, {"slot_scores": slot_debug, "changed_slots": 0, "fallback": True}
+    chosen.reverse()
+    refined = [float(patch_times_s[i]) for i in chosen]
+    changed = sum(1 for a, b in zip(group_key_indices, chosen) if int(a) != int(b))
+    return refined, {
+        "slot_scores": slot_debug,
+        "changed_slots": int(changed),
+        "chosen_indices": [int(i) for i in chosen],
+        "chosen_times_s": refined,
+        "total_score": float(np.max(dp[-1])),
+        "fallback": False,
+    }
+
+
+def _rerank_dense_structured_hypotheses(
+    sensor,
+    password_groups_s,
+    stage2_debug,
+    classifier,
+    cls_means,
+    cls_stds,
+    device,
+    target_rate_hz,
+    stage2_score_weight=0.25,
+):
+    if not stage2_debug or not stage2_debug.get("regions"):
+        return password_groups_s, {"enabled": False, "reason": "no_stage2_debug"}
+    region = stage2_debug["regions"][0]
+    hypotheses = region.get("hypotheses") or []
+    if not hypotheses:
+        return password_groups_s, {"enabled": False, "reason": "no_hypotheses"}
+
+    hyp_debug = []
+    stage2_scores = []
+    cls_scores = []
+    for hyp in hypotheses:
+        groups_s = hyp.get("key_times_s_by_group") or []
+        cls_eval = _score_password_groups_classifier_global(
+            sensor,
+            groups_s,
+            classifier,
+            cls_means,
+            cls_stds,
+            device,
+            target_rate_hz,
+        )
+        stage2_score = float(hyp.get("stage2_score", 0.0))
+        stage2_scores.append(stage2_score)
+        cls_scores.append(float(cls_eval["classifier_score"]))
+        hyp_debug.append({
+            "hypothesis_rank": int(hyp.get("hypothesis_rank", len(hyp_debug))),
+            "stage2_score": stage2_score,
+            "classifier_score": float(cls_eval["classifier_score"]),
+            "n_valid_windows": int(cls_eval["n_valid_windows"]),
+            "groups": cls_eval["groups"],
+            "key_times_s_by_group": groups_s,
+            "boundary_times_s": hyp.get("boundary_times_s") or [],
+            "group_lengths": hyp.get("group_lengths") or [],
+        })
+
+    stage2_norm = _normalize_scores(stage2_scores)
+    cls_norm = _normalize_scores(cls_scores)
+    best_idx = 0
+    best_score = -1e18
+    for i, dbg in enumerate(hyp_debug):
+        combined = float(cls_norm[i] + float(stage2_score_weight) * stage2_norm[i])
+        dbg["stage2_score_norm"] = float(stage2_norm[i])
+        dbg["classifier_score_norm"] = float(cls_norm[i])
+        dbg["combined_score"] = combined
+        if combined > best_score:
+            best_score = combined
+            best_idx = i
+
+    chosen_groups = hyp_debug[best_idx].get("key_times_s_by_group") or password_groups_s
+    return chosen_groups, {
+        "enabled": True,
+        "mode": "global_hypothesis_rerank",
+        "stage2_score_weight": float(stage2_score_weight),
+        "selected_hypothesis_rank": int(hyp_debug[best_idx].get("hypothesis_rank", best_idx)),
+        "selected_debug_index": int(best_idx),
+        "hypotheses": hyp_debug,
+    }
+
+
 def levenshtein(a, b):
     if a == b: return 0
     if not a: return len(b)
@@ -1028,6 +1301,7 @@ def run_full_pipeline(
     seg_model, seg_means, seg_stds, seg_meta,
     onset_model, onset_means, onset_stds, onset_meta,
     classifier, cls_classes, cls_means, cls_stds,
+    dense_stage2_model, dense_stage2_means, dense_stage2_stds,
     device,
     gt_passwords, gt_refined_segs, gt_password_groups_ns,
     expected_password_count=5,
@@ -1044,11 +1318,16 @@ def run_full_pipeline(
     min_valley_width_ms=200,
     min_segment_duration_ms=1500,
     onset_base_threshold=0.3,
+    stage2_min_segment_s=0.8,
+    stage2_max_segment_s=8.0,
+    stage2_topk_hypotheses=12,
+    stage2_global_rerank_weight=0.25,
 ):
     """
     Full pipeline: Stage 1 → Stage 2 → Stage 3.
 
     stage2_method:
+        "dense_structured" – dense patch-level key/boundary modeling + global decode
         "energy_valley"  – NEW: split coarse region by energy valleys, then
                            detect onsets within each sub-segment (top-down)
         "iki_heuristic"  – LEGACY: detect all onsets, then group by IKI/gap
@@ -1068,7 +1347,35 @@ def run_full_pipeline(
     n_total_onsets = 0
     target_password_count = max(1, int(expected_password_count))
 
-    if stage2_method == "energy_valley":
+    if stage2_method == "dense_structured":
+        from stage2_dense_structured import run_stage2_dense
+
+        if dense_stage2_model is None:
+            raise ValueError("dense_structured requires a loaded dense stage2 model")
+        password_groups_s, ds_debug = run_stage2_dense(
+            sensor, coarse,
+            dense_stage2_model, dense_stage2_means, dense_stage2_stds,
+            device,
+            expected_password_count=target_password_count,
+            expected_password_len=expected_password_len,
+            min_segment_s=stage2_min_segment_s,
+            max_segment_s=stage2_max_segment_s,
+            n_best_hypotheses=stage2_topk_hypotheses,
+        )
+        n_total_onsets = sum(len(g) for g in password_groups_s)
+        stage2_debug = ds_debug
+        reranked_groups_s, rerank_debug = _rerank_dense_structured_hypotheses(
+            sensor, password_groups_s, stage2_debug,
+            classifier, cls_means, cls_stds, device, target_rate_hz,
+            stage2_score_weight=stage2_global_rerank_weight,
+        )
+        password_groups_s = reranked_groups_s
+        n_total_onsets = sum(len(g) for g in password_groups_s)
+        stage2_debug["classifier_rerank"] = rerank_debug
+        if stage2_debug.get("regions"):
+            stage2_debug["regions"][0]["selected_rerank_hypothesis_rank"] = int(rerank_debug.get("selected_hypothesis_rank", 0))
+
+    elif stage2_method == "energy_valley":
         # ── Stage 2v2: Energy-Valley Segmentation ──
         password_groups_s, ev_debug = run_stage2_energy_valley(
             sensor, coarse,
@@ -1293,13 +1600,23 @@ def main():
     p.add_argument("--onset-smooth-n", type=int, default=3)
     p.add_argument("--max-onsets-per-region", type=int, default=56)
     p.add_argument("--group-quality-threshold", type=float, default=0.48)
-    p.add_argument("--stage2-method", choices=["energy_valley", "iki_heuristic"], default="energy_valley",
-                   help="Stage 2 strategy: energy_valley (NEW, top-down) or iki_heuristic (legacy, bottom-up)")
+    p.add_argument("--stage2-method", choices=["dense_structured", "energy_valley", "iki_heuristic"], default="dense_structured",
+                   help="Stage 2 strategy: dense_structured, energy_valley, or iki_heuristic")
     p.add_argument("--energy-window-ms", type=int, default=80, help="Energy envelope window (ms)")
     p.add_argument("--energy-stride-ms", type=int, default=10, help="Energy envelope stride (ms)")
     p.add_argument("--min-valley-width-ms", type=int, default=200, help="Minimum valley width to qualify as inter-password gap")
     p.add_argument("--min-segment-duration-ms", type=int, default=1500, help="Minimum password segment duration (ms)")
     p.add_argument("--onset-base-threshold", type=float, default=0.3, help="Lower onset threshold for energy_valley per-segment detection")
+    p.add_argument("--stage2-checkpoint", default="results/gpt54_dense_stage2.pt",
+                   help="Dense structured Stage 2 checkpoint")
+    p.add_argument("--stage2-scaler", default="results/gpt54_dense_stage2_scaler.npz",
+                   help="Dense structured Stage 2 scaler")
+    p.add_argument("--stage2-min-segment-s", type=float, default=0.8)
+    p.add_argument("--stage2-max-segment-s", type=float, default=8.0)
+    p.add_argument("--stage2-topk-hypotheses", type=int, default=12,
+                   help="Dense structured Stage 2: number of top structured hypotheses kept for global rerank")
+    p.add_argument("--stage2-global-rerank-weight", type=float, default=0.25,
+                   help="Relative weight of dense Stage 2 score when combining with global classifier rerank")
     p.add_argument("--auto-sweep", action="store_true",
                    help="Try multiple Stage-2 parameter combinations and print a ranked summary.")
     p.add_argument("--sweep-onset-thresholds", default="0.45,0.5,0.55")
@@ -1317,7 +1634,8 @@ def main():
         _setup_imports(args.project_root)
         root = os.path.abspath(args.project_root)
         for attr in ["segment_checkpoint", "segment_scaler", "onset_checkpoint",
-                     "onset_scaler", "classifier_checkpoint", "classifier_scaler", "report"]:
+                     "onset_scaler", "classifier_checkpoint", "classifier_scaler",
+                     "stage2_checkpoint", "stage2_scaler", "report"]:
             v = getattr(args, attr)
             if not os.path.isabs(v):
                 setattr(args, attr, os.path.join(root, v))
@@ -1339,6 +1657,14 @@ def main():
     print(f"Onset detector loaded")
     classifier, cls_classes, cls_means, cls_stds = load_final_inception(args.classifier_checkpoint, args.classifier_scaler, device)
     print(f"Classifier loaded ({len(cls_classes)} classes)")
+    dense_stage2_model = dense_stage2_means = dense_stage2_stds = None
+    if args.stage2_method == "dense_structured":
+        from stage2_dense_structured import load_dense_stage2_model
+
+        dense_stage2_model, dense_stage2_means, dense_stage2_stds, _, _ = load_dense_stage2_model(
+            args.stage2_checkpoint, args.stage2_scaler, device
+        )
+        print("Dense structured Stage 2 loaded")
 
     sessions = discover_sessions(args.mixed2_dirs, mode_filter="mixed2", dedup=False)
     if not sessions:
@@ -1374,6 +1700,7 @@ def main():
                 seg_model, seg_means, seg_stds, seg_meta,
                 onset_model, onset_means, onset_stds, onset_meta,
                 classifier, cls_classes, cls_means, cls_stds,
+                dense_stage2_model, dense_stage2_means, dense_stage2_stds,
                 device, gt_passwords, gt_refined, gt_password_groups,
                 expected_password_count=run_args.get("expected_password_count", args.expected_password_count),
                 segment_threshold=run_args["segment_threshold"],
@@ -1390,6 +1717,10 @@ def main():
                 min_valley_width_ms=run_args.get("min_valley_width_ms", args.min_valley_width_ms),
                 min_segment_duration_ms=run_args.get("min_segment_duration_ms", args.min_segment_duration_ms),
                 onset_base_threshold=run_args.get("onset_base_threshold", args.onset_base_threshold),
+                stage2_min_segment_s=run_args.get("stage2_min_segment_s", args.stage2_min_segment_s),
+                stage2_max_segment_s=run_args.get("stage2_max_segment_s", args.stage2_max_segment_s),
+                stage2_topk_hypotheses=run_args.get("stage2_topk_hypotheses", args.stage2_topk_hypotheses),
+                stage2_global_rerank_weight=run_args.get("stage2_global_rerank_weight", args.stage2_global_rerank_weight),
             )
             all_results.append(result)
             e = result["e2e_full"]
@@ -1507,6 +1838,8 @@ def main():
         "min_valley_width_ms": args.min_valley_width_ms,
         "min_segment_duration_ms": args.min_segment_duration_ms,
         "onset_base_threshold": args.onset_base_threshold,
+        "stage2_min_segment_s": args.stage2_min_segment_s,
+        "stage2_max_segment_s": args.stage2_max_segment_s,
     })
 
     if all_results:

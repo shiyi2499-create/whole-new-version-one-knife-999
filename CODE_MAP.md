@@ -3,277 +3,94 @@
 This file is the current map of the main workspace under
 [备份（mac_vs专用）](/Users/shiyi/备份（mac_vs专用）).
 
-Its goal is simple:
-
-- explain which files are part of the current mainline
-- explain which files are legacy or auxiliary
-- reduce confusion when running experiments locally or on the server
-
-## 1. Current Mainline
-
-These files define the active password-route story.
+## 1. Current Reliable Mainline Pieces
 
 ### Data collection
-
 - [collector.py](/Users/shiyi/备份（mac_vs专用）/collector.py)
-  - main data collection entrypoint
-  - supports:
-    - `single_key`
-    - `free_type` with `sentence / continuous / password`
-
 - [sensor_reader.py](/Users/shiyi/备份（mac_vs专用）/sensor_reader.py)
-  - IMU reader abstraction
-  - currently aligned to the non-root direct SPU route
-
 - [spu_backend.py](/Users/shiyi/备份（mac_vs专用）/spu_backend.py)
-  - direct Apple SPU / IOKit backend used by the current non-root path
-
 - [keyboard_listener.py](/Users/shiyi/备份（mac_vs专用）/keyboard_listener.py)
-  - keyboard label capture for `events.csv`
-
 - [typing_prompt_profiles.py](/Users/shiyi/备份（mac_vs专用）/typing_prompt_profiles.py)
-  - defines prompt profiles
-  - current active password pool:
-    - `a-z0-9`
-    - `len=8`
-    - `200` total strings
-    - `20` groups
 
-### Collection helpers
-
-- [run_password_len8_part.sh](/Users/shiyi/备份（mac_vs专用）/run_password_len8_part.sh)
-  - helper for `password/len_8`
-  - current use: record `part 1..20`
-
-- [run_text_part.sh](/Users/shiyi/备份（mac_vs专用）/run_text_part.sh)
-  - generic helper for `sentence / continuous / password`
-
-- [run_single_key_boost_finger.sh](/Users/shiyi/备份（mac_vs专用）/run_single_key_boost_finger.sh)
-  - targeted single-key boost capture helper
-
-### Preprocessing / training
-
-- [preprocessor.py](/Users/shiyi/备份（mac_vs专用）/preprocessor.py)
-  - event-aligned window extraction + resampling
-  - current default target rate remains `190 Hz`
-
-### Onset / password-boundary
-
-- [onset_detection/onset_collector.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/onset_collector.py)
-  - onset-specific collector
-  - supports:
-    - negative nuisance motions
-    - `freetyping` negative collection with `events.csv`
-    - `mixed`
-    - structured `mixed2` ~3-minute protocol
-  - current practical order:
-    - `idle -> trackpad_move -> typing_1 -> trackpad_click -> idle -> typing_2 -> shake`
-
-- [onset_detection/onset_preprocessor.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/onset_preprocessor.py)
-  - builds both:
-    - onset point-detection datasets
-    - `password_boundary` datasets
-  - current mainline is `--task password_boundary`
-
-- [onset_detection/onset_model.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/onset_model.py)
-  - contains:
-    - `OnsetCNN`
-    - `OnsetCNNLarge`
-    - `PasswordBoundaryCNN`
-
-- [onset_detection/train_onset.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/train_onset.py)
-  - trains:
-    - `--task onset`
-    - `--task password_boundary`
-    - legacy `--task activity`
-
-- [onset_detection/eval_onset.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/eval_onset.py)
-  - segment-level / mixed2 episode-level evaluation
-  - current main use:
-    - `password_boundary` boundary metrics
-
-- [onset_detection/eval_onset_e2e.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/eval_onset_e2e.py)
-  - end-to-end Path A / Path B evaluation
-  - current Path B logic:
-    - `password_boundary` segmentation
-    - onset detection
-    - gap-based password grouping
-    - classifier recovery
-  - `e2e_full` / `e2e_gt_seg` no longer use GT-assisted group alignment
-  - `e2e_gt_aligned` remains the explicit oracle baseline
-
-- [onset_detection/password_segment_preprocessor.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_preprocessor.py)
-  - new experimental branch
-  - builds a binary `password_segment` dataset:
-    - positive: `password/len_8`
-    - negatives: `onset_negative + single_key + boost + mixed2 typing_1`
-  - now includes source balancing:
-    - caps `single_key_neg`
-    - lifts `negative_freetyping`
-    - lifts `mixed2_free_typing`
-  - current main lesson:
-    - if `freetyping` is too scarce, Stage 1 mainly learns `password` vs obvious non-password background
-    - not `password` vs real free typing
-
-- [onset_detection/password_segment_detector.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_detector.py)
-  - new experimental two-stage Path B branch
-  - logic:
-    - coarse `password vs non_password` region detection
-    - onset extraction within coarse region
-    - IKI / rhythm refinement
-    - final password classifier scoring
-  - GT baseline handling has been tightened to use per-password supported-character groups
-  - current status:
-    - coarse localization on mixed2 is now working (`Episode IoU ≈ 0.967`)
-    - main remaining bottleneck is Stage 2 onset/grouping over-triggering
-
-- [onset_detection/README_password_segment.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README_password_segment.md)
-  - doc for the experimental `password_segment` branch
-
+### Password classifier route
 - [phase3_password_inception/run_password_closure_inception.py](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/run_password_closure_inception.py)
-  - current zero-shot password-route script
-  - trains baseline on `single_key + boost`
-  - tests on password strings
-
 - [adapt_password_len8_inception.py](/Users/shiyi/备份（mac_vs专用）/adapt_password_len8_inception.py)
-  - current main adaptation script
-  - baseline from `single_key + boost`
-  - default split now:
-    - adapt parts `1-16`
-    - test parts `17-20`
-  - automatically ignores older duplicate/incomplete sessions for the same part
-  - now saves the adapted model back to `--checkpoint-path`, so downstream
-    onset/password-segment evaluation can load the adapted classifier directly
-
 - [multisplit_password_len8_inception.py](/Users/shiyi/备份（mac_vs专用）/multisplit_password_len8_inception.py)
-  - repeated group-split evaluation for:
-    - zero-shot
-    - `single_key + password adaptation`
-  - intended to estimate split stability over multiple random `16/4` group splits
-
 - [password_only_len8_inception.py](/Users/shiyi/备份（mac_vs专用）/password_only_len8_inception.py)
-  - password-only baseline
-  - no `single_key + boost`
-  - intended as the domain-native comparison
 
-### Diagnostics / reporting
+Status:
+- classifier route is working
+- `single_key + password adaptation` is still the strongest classifier story
 
-- [phase3_password_inception/diagnose_singlekey_inception.py](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/diagnose_singlekey_inception.py)
-  - checks whether the current password-route Inception trainer is still strong
-    on held-out isolated-key data
+### Onset Stage 1 / historical baseline
+- [onset_detection/password_segment_preprocessor.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_preprocessor.py)
+- [onset_detection/password_segment_detector.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_detector.py)
 
-- [scan_sampling_rates.py](/Users/shiyi/备份（mac_vs专用）/scan_sampling_rates.py)
-  - sampling-rate audit for raw sessions
+Status:
+- Stage 1 coarse localization works on mixed2
+- this file is still useful as a historical baseline and utility path
+- it is no longer the only recommended Stage 2 direction
 
-## 2. Current Main Data Directories
+## 2. Current Onset Branches
+
+### Claude branch
+- [onset_detection/stage2_claude](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_claude)
+
+Contents:
+- `stage2_dp_segmentation.py`
+- `stage2_ctc.py`
+- `password_segment_detector.py`
+
+Role:
+- preserve Claude-style Stage 2 ideas
+- keep runnable baselines / side branches
+- current best use: comparison branch, not mainline
+
+### GPT branch
+- [onset_detection/stage2_gpt54](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_gpt54)
+
+Contents:
+- `password_stage2_model.py`
+- `password_stage2_preprocessor.py`
+- `password_stage2_dataset.py`
+- `stage2_dense_structured.py`
+- `stage2_decoder.py`
+- `password_segment_detector.py`
+
+Role:
+- current main exploration branch for dense Stage 2
+- already supports training + Path B inference
+- current lesson: model/decoder improved, but train-test mismatch remains the main concern
+
+## 3. Current Main Data Directories
 
 - [data/raw/single_key](/Users/shiyi/备份（mac_vs专用）/data/raw/single_key)
-  - main isolated-key baseline data
-
 - [data/raw/boost](/Users/shiyi/备份（mac_vs专用）/data/raw/boost)
-  - targeted single-key boost data
-
 - [data/raw/password/len_8](/Users/shiyi/备份（mac_vs专用）/data/raw/password/len_8)
-  - current password-route dataset
-  - active main testbed
-
 - [data/raw/onset_negative](/Users/shiyi/备份（mac_vs专用）/data/raw/onset_negative)
-  - nuisance-motion negatives for onset / activity tasks
-  - current classes include:
-    - `idle`
-    - `trackpad_move`
-    - `trackpad_click`
-    - `shake`
-    - `freetyping`
+- [data/raw/onset_mixed2](/Users/shiyi/备份（mac_vs专用）/data/raw/onset_mixed2)
 
-- `data/raw/onset_mixed2`
-  - current structured ~3-minute mixed-stream collection directory
-  - primary source for password episode boundary supervision and Path B evaluation
+Current interpretation:
+- `single_key + boost` mainly support classifier baseline
+- `password/len_8` supports classifier adaptation and Stage 2 pretraining ideas
+- `mixed2` is the held-out continuous-stream evaluation target
+- current suspicion: Stage 2 needs mixed-style training data, not just clean password segments
 
-- [data/processed/merged_dataset.npz](/Users/shiyi/备份（mac_vs专用）/data/processed/merged_dataset.npz)
-  - main baseline training set
-  - expected source:
-    - `single_key + boost`
-
-- `data/processed/onset_dataset.npz`
-  - onset point-detection dataset
-
-- `data/processed/activity_dataset.npz`
-  - legacy keyboard activity segmentation dataset
-
-- `data/processed/password_boundary_dataset.npz`
-  - current main dataset for password-centric boundary segmentation
-
-- `data/processed/password_segment_dataset.npz`
-  - experimental binary dataset for the two-stage password-segment branch
-
-## 3. Current Main Docs
+## 4. Key Docs To Read First
 
 - [README.md](/Users/shiyi/备份（mac_vs专用）/README.md)
-  - top-level working plan
-
-- [PAPER_OUTLINE.md](/Users/shiyi/备份（mac_vs专用）/PAPER_OUTLINE.md)
-  - current paper structure
-
-- [COLLECTION_PROFILES_AND_MODELS.md](/Users/shiyi/备份（mac_vs专用）/COLLECTION_PROFILES_AND_MODELS.md)
-  - collection profile overview and model-route logic
-
-- [phase3_password_inception/README.md](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/README.md)
-  - password-route explanation
-
-- [phase3_password_inception/STATUS.md](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/STATUS.md)
-  - current experimental status
-
-- [phase3_password_inception/ROADMAP.md](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/ROADMAP.md)
-  - next-step plan
-
-- [phase3_password_inception/RESULTS_LEN8.md](/Users/shiyi/备份（mac_vs专用）/phase3_password_inception/RESULTS_LEN8.md)
-  - current `len=8` result summary
-
 - [onset_detection/README.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README.md)
-  - current onset / password-boundary module doc
+- [onset_detection/README_password_segment.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README_password_segment.md)
+- [onset_detection/stage2_claude/README.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_claude/README.md)
+- [onset_detection/stage2_gpt54/README.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_gpt54/README.md)
+- [ONSET_CODEX_HANDOFF.md](/Users/shiyi/备份（mac_vs专用）/ONSET_CODEX_HANDOFF.md)
 
-## 4. Legacy / Secondary Files
+## 5. Current Recommendation
 
-These files still matter, but are not the current password-mainline entrypoint.
-
-- [run_real_freetype.py](/Users/shiyi/备份（mac_vs专用）/run_real_freetype.py)
-  - older sentence/free-type end-to-end path
-
-- [run_freetype_closure_eval.py](/Users/shiyi/备份（mac_vs专用）/run_freetype_closure_eval.py)
-  - sentence/free-type closure evaluation
-
-- [run_freetype_finetune_beam.py](/Users/shiyi/备份（mac_vs专用）/run_freetype_finetune_beam.py)
-  - sentence/free-type fine-tune + beam search path
-
-- [phase3_decoder.py](/Users/shiyi/备份（mac_vs专用）/phase3_decoder.py)
-  - older sentence/word decoder logic
-  - not the current main password route
-
-- [train_phase2.py](/Users/shiyi/备份（mac_vs专用）/train_phase2.py)
-  - broader Phase 2 model benchmark / training script
-
-- [run_transformer_only.py](/Users/shiyi/备份（mac_vs专用）/run_transformer_only.py)
-  - transformer-only training/eval route
-
-- [train_baseline.py](/Users/shiyi/备份（mac_vs专用）/train_baseline.py)
-  - classical feature-based baselines
-
-## 5. Working Rules We Are Following
-
-1. keep `InceptionTime` fixed while validating password-route protocol choices
-2. do not mix model changes with data-protocol changes too early
-3. prefer root-level scripts for server runs
-4. treat `single_key + boost` as the baseline training source unless explicitly
-   testing `password only`
-5. treat `password/len_8` as the current main continuous-input benchmark
-6. treat `mixed2` as the current paper-oriented password-boundary demo protocol
-
-## 6. Near-Term Planned Experiments
-
-1. collect `mixed2` streams
-2. train / evaluate `PasswordBoundaryCNN`
-3. run Path B:
-   - `password_boundary -> onset -> gap-group -> classify`
-4. extend password route to `len=9 / len=10`
-5. only after protocol stability is established, revisit model comparison
+Do not assume Stage 2 is “almost solved”.
+Current evidence says:
+- Stage 1 is solved enough
+- Stage 3 is solved enough
+- Stage 2 needs either:
+  - mixed-style training data / pseudo mixed training
+  - or a cleaner rebuild into `Stage 2A group segmentation + Stage 2B onset detection`

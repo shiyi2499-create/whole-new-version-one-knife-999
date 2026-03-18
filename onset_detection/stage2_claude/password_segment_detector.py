@@ -25,6 +25,11 @@ from typing import Optional
 import numpy as np
 import torch
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+PARENT_ONSET_DIR = os.path.dirname(HERE)
+if PARENT_ONSET_DIR not in sys.path:
+    sys.path.insert(0, PARENT_ONSET_DIR)
+
 from onset_model import build_onset_model
 from onset_preprocessor import (
     DEFAULT_TARGET_RATE_HZ,
@@ -1044,15 +1049,19 @@ def run_full_pipeline(
     min_valley_width_ms=200,
     min_segment_duration_ms=1500,
     onset_base_threshold=0.3,
+    ctc_model=None,
+    ctc_means=None,
+    ctc_stds=None,
+    ctc_beam_width=20,
 ):
     """
     Full pipeline: Stage 1 → Stage 2 → Stage 3.
 
     stage2_method:
-        "energy_valley"  – NEW: split coarse region by energy valleys, then
-                           detect onsets within each sub-segment (top-down)
-        "iki_heuristic"  – LEGACY: detect all onsets, then group by IKI/gap
-                           heuristics (bottom-up)
+        "dense_ctc"      – MAIN LINE: dense CTC sequence model on coarse region,
+                           directly outputs character sequences with separator tokens
+        "energy_valley"  – split coarse region by energy valleys, then onset detection
+        "iki_heuristic"  – LEGACY: onset + IKI/gap heuristic grouping
     """
     target_rate_hz = seg_meta["target_rate_hz"]
 
@@ -1067,8 +1076,29 @@ def run_full_pipeline(
     stage2_debug = {}
     n_total_onsets = 0
     target_password_count = max(1, int(expected_password_count))
+    ctc_passwords = None  # only set by dense_ctc path
 
-    if stage2_method == "energy_valley":
+    if stage2_method == "dense_ctc":
+        # ── Stage 2 main-line: Dense CTC ──
+        from stage2_ctc import run_stage2_ctc, score_ctc_passwords
+
+        if ctc_model is None:
+            raise ValueError("dense_ctc requires ctc_model/ctc_means/ctc_stds to be loaded")
+
+        ctc_passwords, ctc_debug = run_stage2_ctc(
+            sensor, coarse,
+            ctc_model, ctc_means, ctc_stds, device,
+            n_passwords=target_password_count,
+            password_len=expected_password_len,
+            beam_width=ctc_beam_width,
+        )
+        stage2_debug = ctc_debug
+        # CTC directly outputs password strings — no onset groups needed
+        # We still build dummy refined_episodes for boundary metrics
+        password_groups_s = []  # not used for CTC scoring, but needed for episode metrics
+        n_total_onsets = sum(len(pw.replace('?', '')) for pw in ctc_passwords)
+
+    elif stage2_method == "energy_valley":
         # ── Stage 2v2: Energy-Valley Segmentation ──
         password_groups_s, ev_debug = run_stage2_energy_valley(
             sensor, coarse,
@@ -1144,26 +1174,48 @@ def run_full_pipeline(
             ],
         }
 
-    # ── Convert to ns for classifier ──
-    password_groups_ns = [[int(t * 1e9) for t in g] for g in password_groups_s]
-
-    # Build refined episodes from groups
-    refined_episodes = []
-    for g in password_groups_s:
-        if g:
-            refined_episodes.append(Episode(start_s=g[0] - 0.15, end_s=g[-1] + 0.25, label="password"))
+    # ── Convert to ns for classifier (not needed for dense_ctc) ──
+    if stage2_method == "dense_ctc":
+        password_groups_ns = []
+        refined_episodes = []
+        # For CTC, we don't have onset-level groups — build approximate episodes
+        # from coarse regions for boundary metric reporting
+        for region in coarse:
+            refined_episodes.append(Episode(start_s=region.start_s, end_s=region.end_s, label="password"))
+    else:
+        password_groups_ns = [[int(t * 1e9) for t in g] for g in password_groups_s]
+        refined_episodes = []
+        for g in password_groups_s:
+            if g:
+                refined_episodes.append(Episode(start_s=g[0] - 0.15, end_s=g[-1] + 0.25, label="password"))
 
     # GT episodes for boundary evaluation
     gt_episodes = [Episode(start_s=s["start_time_ns"]/1e9, end_s=s["end_time_ns"]/1e9, label="password")
                    for s in gt_refined_segs]
     ep_match = match_episodes(refined_episodes, gt_episodes, min_iou=0.3)
 
-    # ── Stage 3: classify each password group ──
+    # ── Stage 3: classify / score ──
     e2e_results = []
     gt_results = []
 
     for pw_idx, ref in enumerate(gt_passwords):
-        if pw_idx < len(password_groups_ns):
+        if stage2_method == "dense_ctc" and ctc_passwords is not None:
+            # CTC path: hypothesis comes directly from CTC decode
+            hyp = ctc_passwords[pw_idx] if pw_idx < len(ctc_passwords) else ""
+            hyp_clean = hyp.replace('?', '')  # remove padding markers
+            e2e_r = {
+                "reference": ref,
+                "hypothesis": hyp,
+                "n_onsets": len(hyp_clean),
+                "n_valid_windows": len(hyp_clean),
+                "cer": levenshtein(ref, hyp) / max(len(ref), 1),
+                "char_top1": sum(1 for a, b in zip(hyp, ref) if a == b) / max(len(ref), 1),
+                "char_top3": sum(1 for a, b in zip(hyp, ref) if a == b) / max(len(ref), 1),  # CTC has no top-k, top1=top3
+                "char_top5": sum(1 for a, b in zip(hyp, ref) if a == b) / max(len(ref), 1),
+            }
+            for c in SEQ_HIT_CUTOFFS:
+                e2e_r[f"seq_top{c}"] = 1 if hyp == ref else 0
+        elif pw_idx < len(password_groups_ns):
             e2e_r = score_one_password(
                 password_groups_ns[pw_idx], ref, sensor,
                 classifier, cls_classes, cls_means, cls_stds, device, target_rate_hz)
@@ -1174,6 +1226,7 @@ def run_full_pipeline(
             for c in SEQ_HIT_CUTOFFS: e2e_r[f"seq_top{c}"] = 0
         e2e_results.append(e2e_r)
 
+        # GT baseline always uses the existing onset→classifier path
         if pw_idx < len(gt_password_groups_ns):
             gt_r = score_one_password(
                 gt_password_groups_ns[pw_idx], ref, sensor,
@@ -1293,13 +1346,19 @@ def main():
     p.add_argument("--onset-smooth-n", type=int, default=3)
     p.add_argument("--max-onsets-per-region", type=int, default=56)
     p.add_argument("--group-quality-threshold", type=float, default=0.48)
-    p.add_argument("--stage2-method", choices=["energy_valley", "iki_heuristic"], default="energy_valley",
-                   help="Stage 2 strategy: energy_valley (NEW, top-down) or iki_heuristic (legacy, bottom-up)")
+    p.add_argument("--stage2-method", choices=["energy_valley", "iki_heuristic", "dense_ctc"], default="energy_valley",
+                   help="Stage 2 strategy: energy_valley, iki_heuristic, or dense_ctc")
     p.add_argument("--energy-window-ms", type=int, default=80, help="Energy envelope window (ms)")
     p.add_argument("--energy-stride-ms", type=int, default=10, help="Energy envelope stride (ms)")
     p.add_argument("--min-valley-width-ms", type=int, default=200, help="Minimum valley width to qualify as inter-password gap")
     p.add_argument("--min-segment-duration-ms", type=int, default=1500, help="Minimum password segment duration (ms)")
     p.add_argument("--onset-base-threshold", type=float, default=0.3, help="Lower onset threshold for energy_valley per-segment detection")
+    p.add_argument("--ctc-checkpoint", default="results/claude_ctc_stage2.pt",
+                   help="Dense CTC Stage-2 checkpoint path")
+    p.add_argument("--ctc-scaler", default="results/claude_ctc_stage2_scaler.npz",
+                   help="Dense CTC Stage-2 scaler path")
+    p.add_argument("--ctc-beam-width", type=int, default=20,
+                   help="Beam width for dense_ctc decoding")
     p.add_argument("--auto-sweep", action="store_true",
                    help="Try multiple Stage-2 parameter combinations and print a ranked summary.")
     p.add_argument("--sweep-onset-thresholds", default="0.45,0.5,0.55")
@@ -1317,7 +1376,8 @@ def main():
         _setup_imports(args.project_root)
         root = os.path.abspath(args.project_root)
         for attr in ["segment_checkpoint", "segment_scaler", "onset_checkpoint",
-                     "onset_scaler", "classifier_checkpoint", "classifier_scaler", "report"]:
+                     "onset_scaler", "classifier_checkpoint", "classifier_scaler",
+                     "ctc_checkpoint", "ctc_scaler", "report"]:
             v = getattr(args, attr)
             if not os.path.isabs(v):
                 setattr(args, attr, os.path.join(root, v))
@@ -1339,6 +1399,11 @@ def main():
     print(f"Onset detector loaded")
     classifier, cls_classes, cls_means, cls_stds = load_final_inception(args.classifier_checkpoint, args.classifier_scaler, device)
     print(f"Classifier loaded ({len(cls_classes)} classes)")
+    ctc_model = ctc_means = ctc_stds = None
+    if args.stage2_method == "dense_ctc":
+        from stage2_ctc import load_ctc_model
+        ctc_model, ctc_means, ctc_stds, _ctc_meta = load_ctc_model(args.ctc_checkpoint, args.ctc_scaler, device)
+        print("Dense CTC loaded")
 
     sessions = discover_sessions(args.mixed2_dirs, mode_filter="mixed2", dedup=False)
     if not sessions:
@@ -1390,6 +1455,10 @@ def main():
                 min_valley_width_ms=run_args.get("min_valley_width_ms", args.min_valley_width_ms),
                 min_segment_duration_ms=run_args.get("min_segment_duration_ms", args.min_segment_duration_ms),
                 onset_base_threshold=run_args.get("onset_base_threshold", args.onset_base_threshold),
+                ctc_model=ctc_model,
+                ctc_means=ctc_means,
+                ctc_stds=ctc_stds,
+                ctc_beam_width=run_args.get("ctc_beam_width", args.ctc_beam_width),
             )
             all_results.append(result)
             e = result["e2e_full"]
@@ -1507,6 +1576,7 @@ def main():
         "min_valley_width_ms": args.min_valley_width_ms,
         "min_segment_duration_ms": args.min_segment_duration_ms,
         "onset_base_threshold": args.onset_base_threshold,
+        "ctc_beam_width": args.ctc_beam_width,
     })
 
     if all_results:
