@@ -26,6 +26,12 @@
 
 这说明：
 - 只要分段/对齐合理，Stage 3 是能工作的
+- 但这里要避免两个误解：
+  - 目前系统验证最充分的是 `InceptionTime` 这条 classifier 路线，不是“所有模型都已经比较完”
+  - 当前最强已核实结果来自 `baseline + password adaptation`，而不是 `password-only` 直接训练
+- 所以更准确的说法是：
+  - Stage 3 已经证明“可用”
+  - 但还没有证明“已经是最终最强版本”
 
 ## 2. 当前失败经验
 
@@ -85,6 +91,9 @@
 更直白地说：
 - clean `password/len_8` 数据不能自然替代 mixed-style Stage 2 训练数据
 - 这和 earlier classifier 路线里“single_key 不做 password adaptation 就直接测 password 会失败”是同一逻辑
+- 同时也要记住另一层事实：
+  - classifier 线里，`password-only` 也没有在已验证实验中超过 `baseline + password adaptation`
+  - 这进一步说明“训练分布对齐”比单纯换个更强模型名字更关键
 
 ## 4. 当前建议的新方向
 

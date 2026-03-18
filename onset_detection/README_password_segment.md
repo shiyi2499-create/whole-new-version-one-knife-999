@@ -39,6 +39,10 @@ mixed2 连续流
 ### 含义
 - Stage 3 本身不是主要问题
 - Stage 2 的分组/对齐/slot 定位才是主要问题
+- 但这不等于 Stage 3 已经到头：
+  - 当前最成熟的是 `InceptionTime` adaptation 线
+  - `password-only` 没有在已核实实验里超过 `baseline + password adaptation`
+  - 多模型和更强 classifier 版本仍然值得后续继续做
 
 ## 为什么这个分支不再是最终主线
 

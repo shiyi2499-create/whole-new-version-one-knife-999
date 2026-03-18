@@ -29,6 +29,11 @@
   - `char_top3 = 82.5%`
   - `char_top5 = 87.5%`
   - `CER = 42.5%`
+- 但请额外记住：
+  - 当前真正被系统验证跑通的是 `InceptionTime` classifier 路线
+  - 目前验证到的 strongest story 是 `single_key / merged baseline + password adaptation`
+  - `password-only` 训练在现有已核实实验里并没有超过这条 baseline+adaptation 路线
+  - 多模型对比和“更满血的 password classifier”还没有系统做完
 
 ## 当前真正的瓶颈
 - Stage 2
@@ -70,6 +75,10 @@
 - single_key 不做 password adaptation
 - 直接测 password 会失败
 是同一逻辑
+
+同时不要误读成“classifier 已经做到头了”：
+- 现阶段更准确的说法是：classifier 已证明可用，但不是已经榨干上限
+- mixed2 当前更大的主矛盾仍然是 Stage 2
 
 ## 当前最被认可的新方向
 保留：

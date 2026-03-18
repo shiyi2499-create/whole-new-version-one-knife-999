@@ -21,6 +21,10 @@ This file is the current map of the main workspace under
 Status:
 - classifier route is working
 - `single_key + password adaptation` is still the strongest classifier story
+- this has only been clearly validated on the `InceptionTime` route so far
+- `password-only` did not beat `baseline + password adaptation` in the current verified experiments
+- multi-model comparison is still incomplete
+- the password classifier is useful, but should not be treated as already “full-strength” or fully exhausted
 
 ### Onset Stage 1 / historical baseline
 - [onset_detection/password_segment_preprocessor.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_preprocessor.py)

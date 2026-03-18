@@ -48,6 +48,16 @@ mixed2 上的 GT baseline：
 - `char_top5 = 87.5%`
 - `CER = 42.5%`
 
+关于 password classifier，有 3 个当前必须记住的事实：
+- 目前真正被系统验证跑通的是 `InceptionTime` 这条线，不是“所有模型都验证过后的最终最优版”
+- 在现有实验里，`single_key / merged baseline + password adaptation` 明显强于 `password-only` 直接训练；这件事至少在 Inception 路线上已经被验证
+- 还没有做完的事情包括：多模型系统比较、更强 adaptation 设计、以及把 password classifier 做到“满血版”
+
+换句话说：
+- password classifier 路线已经证明可用
+- 但它还没有被证明已经到达天花板
+- 当前 mixed2 卡住的主因仍然更像 Stage 2，而不是 classifier 已经无路可走
+
 ### Stage 2（现状）
 我们已经走过 4 条线：
 - heuristic / energy-valley
