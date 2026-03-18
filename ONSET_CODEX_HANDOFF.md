@@ -34,6 +34,7 @@
   - 目前验证到的 strongest story 是 `single_key / merged baseline + password adaptation`
   - `password-only` 训练在现有已核实实验里并没有超过这条 baseline+adaptation 路线
   - 多模型对比和“更满血的 password classifier”还没有系统做完
+  - 当前最成熟的是 `36` 类、`len=8` 这一档；符号集、更广字符空间、不同长度都还是后续待做项
 
 ## 当前真正的瓶颈
 - Stage 2

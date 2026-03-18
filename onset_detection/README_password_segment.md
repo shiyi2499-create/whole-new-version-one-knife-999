@@ -43,6 +43,7 @@ mixed2 连续流
   - 当前最成熟的是 `InceptionTime` adaptation 线
   - `password-only` 没有在已核实实验里超过 `baseline + password adaptation`
   - 多模型和更强 classifier 版本仍然值得后续继续做
+  - 当前最成熟的实验口径仍然是 `36` 类、`len=8`；符号与更广长度设置还没有系统展开
 
 ## 为什么这个分支不再是最终主线
 

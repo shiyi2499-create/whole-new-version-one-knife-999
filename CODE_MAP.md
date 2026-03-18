@@ -25,6 +25,7 @@ Status:
 - `password-only` did not beat `baseline + password adaptation` in the current verified experiments
 - multi-model comparison is still incomplete
 - the password classifier is useful, but should not be treated as already “full-strength” or fully exhausted
+- current strongest setting is still centered on `36` classes and `len_8`; symbols / punctuation and broader length settings remain future work
 
 ### Onset Stage 1 / historical baseline
 - [onset_detection/password_segment_preprocessor.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_preprocessor.py)

@@ -58,6 +58,12 @@ mixed2 上的 GT baseline：
 - 但它还没有被证明已经到达天花板
 - 当前 mixed2 卡住的主因仍然更像 Stage 2，而不是 classifier 已经无路可走
 
+当前 password classifier 的“未完成事项”至少包括：
+- 不只看 `InceptionTime`，还要补系统性的多模型比较
+- 不只看当前 `36` 类 `a-z0-9`，后续还可以扩到带符号 / punctuation 的字符集
+- 不只看当前 `len=8` 的最成熟设置，后续还可以检验不同长度与更广 prompt space
+- 不只看当前 `baseline + password adaptation` 的 strongest verified story，后续仍可继续检验更强的 `password-only` 或其它 adaptation 设计
+
 ### Stage 2（现状）
 我们已经走过 4 条线：
 - heuristic / energy-valley
