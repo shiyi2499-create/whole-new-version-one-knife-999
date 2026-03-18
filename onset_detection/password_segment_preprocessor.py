@@ -1,14 +1,22 @@
 """
-Password Segment Preprocessor
-==============================
+Password Segment Preprocessor (balanced sources)
+================================================
 
 Build a **binary** dataset: password_typing (1) vs non_password (0).
 
 Positive samples:  password/len_8 sessions (known password typing)
 Negative samples:
-  - onset_negative (idle / trackpad / shake)
+  - onset_negative (idle / trackpad / shake / freetyping)
   - single_key / boost (keyboard but not password)
-  - **mixed2 typing_1** (free typing — the hardest negative)
+  - **mixed2 typing_1** (free typing inside mixed streams)
+
+Important:
+  The main goal of this builder is not to perfectly mirror raw collection counts.
+  It explicitly rebalances sources so Stage 1 learns:
+
+    password typing  vs  free typing + other background
+
+  instead of being dominated by single_key negative windows.
 """
 
 from __future__ import annotations
@@ -35,6 +43,19 @@ DEFAULT_TARGET_RATE_HZ = 190
 N_CHANNELS = 6
 SEGMENT_WINDOW_MS = 500
 SEGMENT_STRIDE_MS = 40
+DEFAULT_BALANCE_SEED = 42
+
+# Caps overly large background sources so they do not dominate the task.
+MAX_WINDOWS_PER_SOURCE = {
+    "single_key_neg": 20_000,
+    "boost_neg": 8_000,
+}
+
+# Lift hard negatives so Stage 1 is forced to learn password vs free typing.
+MIN_WINDOWS_PER_SOURCE = {
+    "negative_freetyping": 20_000,
+    "mixed2_free_typing": 4_000,
+}
 
 
 # ── Low-level helpers ────────────────────────────────────────
@@ -158,6 +179,54 @@ def _merge_results(results):
         return _empty_result()
     return {k: np.concatenate([r[k] for r in results], axis=0)
             for k in ["windows", "labels", "times_s", "sessions", "sources"]}
+
+
+def _select_indices_for_source(source_indices, target_count, rng):
+    if len(source_indices) == 0:
+        return np.array([], dtype=np.int64)
+    replace = len(source_indices) < target_count
+    return rng.choice(source_indices, size=target_count, replace=replace)
+
+
+def rebalance_by_source(merged, max_per_source, min_per_source, seed):
+    if len(merged["labels"]) == 0:
+        return merged, {}
+
+    rng = np.random.default_rng(seed)
+    sources = merged["sources"]
+    unique_sources = sorted(set(sources.tolist()))
+    chosen = []
+    report = {}
+
+    for src in unique_sources:
+        src_idx = np.where(sources == src)[0]
+        raw_count = len(src_idx)
+        target = raw_count
+        action = "kept"
+
+        if src in max_per_source and raw_count > max_per_source[src]:
+            target = max_per_source[src]
+            action = "capped"
+        if src in min_per_source and raw_count < min_per_source[src]:
+            target = min_per_source[src]
+            action = "oversampled" if action == "kept" else f"{action}+oversampled"
+
+        picked = _select_indices_for_source(src_idx, target, rng)
+        if len(picked):
+            chosen.append(picked)
+        report[src] = {
+            "raw": raw_count,
+            "final": int(target),
+            "action": action,
+        }
+
+    if not chosen:
+        return _empty_result(), report
+
+    final_idx = np.concatenate(chosen, axis=0)
+    rng.shuffle(final_idx)
+    balanced = {k: merged[k][final_idx] for k in ["windows", "labels", "times_s", "sessions", "sources"]}
+    return balanced, report
 
 
 def extract_windows_constant_label(sensor, label, window_ms, stride_ms,
@@ -309,7 +378,13 @@ def build_password_segment_dataset(args):
     if not parts:
         print("  ❌ No data collected"); sys.exit(1)
 
-    merged = _merge_results(parts)
+    merged_raw = _merge_results(parts)
+    merged, balance_report = rebalance_by_source(
+        merged_raw,
+        MAX_WINDOWS_PER_SOURCE,
+        MIN_WINDOWS_PER_SOURCE,
+        args.balance_seed,
+    )
     n_pos = int(merged["labels"].sum())
     n_neg = len(merged["labels"]) - n_pos
     src_counts = {}
@@ -317,7 +392,14 @@ def build_password_segment_dataset(args):
         src_counts[s] = src_counts.get(s, 0) + 1
 
     print(f"\n{'='*60}")
-    print("  DATASET SUMMARY")
+    print("  SOURCE BALANCING")
+    print(f"{'='*60}")
+    for src in sorted(balance_report):
+        item = balance_report[src]
+        print(f"  {src:30s} raw={item['raw']:7,d}  final={item['final']:7,d}  {item['action']}")
+
+    print(f"\n{'='*60}")
+    print("  DATASET SUMMARY (BALANCED)")
     print(f"{'='*60}")
     print(f"  Total:               {len(merged['labels']):,}")
     print(f"  password_typing (1): {n_pos:,}  ({100*n_pos/len(merged['labels']):.1f}%)")
@@ -348,6 +430,7 @@ def main():
     p.add_argument("--window-ms", type=int, default=SEGMENT_WINDOW_MS)
     p.add_argument("--stride-ms", type=int, default=SEGMENT_STRIDE_MS)
     p.add_argument("--target-rate", type=int, default=DEFAULT_TARGET_RATE_HZ)
+    p.add_argument("--balance-seed", type=int, default=DEFAULT_BALANCE_SEED)
     p.add_argument("--output", default="data/processed/password_segment_dataset.npz")
     args = p.parse_args()
     if args.project_root:
