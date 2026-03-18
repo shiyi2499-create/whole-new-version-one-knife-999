@@ -2,6 +2,11 @@
 
 这个目录是当前最接近主线的 Stage 2 探索分支。
 
+默认前提：
+- Stage 1 coarse localization 已经基本可用
+- Stage 3 默认接的是当前已验证最充分的 `InceptionTime` password classifier 路线
+- 但 Stage 3 仍然不是最终上限；这个目录的重点是重建 Stage 2，而不是假设 classifier 已经没有继续提升空间
+
 ## 当前包含
 - [password_stage2_model.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_gpt54/password_stage2_model.py)
 - [password_stage2_preprocessor.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_gpt54/password_stage2_preprocessor.py)
