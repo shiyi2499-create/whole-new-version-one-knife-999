@@ -147,7 +147,7 @@ def estimate_plausible_key_upper_heuristic(onset_times_ns):
     return min(upper, 12)
 
 
-def select_windows_heuristic(onset_times_ns, prob_vecs):
+def select_windows_heuristic(onset_times_ns, prob_vecs, onset_scores=None):
     clustered_times, clustered_probs = cluster_windows_by_time(onset_times_ns, prob_vecs, cluster_gap_ms=140.0)
     valid = list(zip(clustered_times, clustered_probs))
     if not valid:
@@ -155,7 +155,10 @@ def select_windows_heuristic(onset_times_ns, prob_vecs):
     max_keys = estimate_plausible_key_upper_heuristic(clustered_times)
     if max_keys is None or len(valid) <= max_keys:
         return [t for t, _ in valid], [p for _, p in valid]
-    scores = np.array([float(np.max(p)) for _, p in valid], dtype=np.float64)
+    if onset_scores is None:
+        onset_scores = [1.0] * len(clustered_times)
+    onset_score_map = {int(t): float(s) for t, s in zip(onset_times_ns, onset_scores)}
+    scores = np.array([float(np.max(p)) + 0.35 * math.log(max(onset_score_map.get(int(t), 1.0), 1e-6)) for t, p in valid], dtype=np.float64)
     keep_local = np.argsort(scores)[-max_keys:]
     keep_local = sorted(keep_local)
     return [valid[k][0] for k in keep_local], [valid[k][1] for k in keep_local]
@@ -267,7 +270,7 @@ def _window_quality(prob_vec):
 
 
 def refine_onsets_locally(onset_times_ns, sensor, classifier, cls_means, cls_stds, device,
-                          target_rate_hz, shift_ms_candidates=None):
+                          target_rate_hz, onset_scores=None, shift_ms_candidates=None):
     if not onset_times_ns:
         return [], []
     if shift_ms_candidates is None:
@@ -291,7 +294,10 @@ def refine_onsets_locally(onset_times_ns, sensor, classifier, cls_means, cls_std
         valid = [(t, p) for t, p in zip(cand_times, probs) if p is not None]
         if not valid:
             continue
-        best_t, best_p = max(valid, key=lambda x: _window_quality(x[1]))
+        stage2_score = 1.0
+        if onset_scores is not None and len(refined_times) < len(onset_scores):
+            stage2_score = float(onset_scores[len(refined_times)])
+        best_t, best_p = max(valid, key=lambda x: _window_quality(x[1]) + 0.25 * math.log(max(stage2_score, 1e-6)))
         refined_times.append(best_t)
         refined_probs.append(best_p)
         prev_t = best_t
@@ -299,12 +305,13 @@ def refine_onsets_locally(onset_times_ns, sensor, classifier, cls_means, cls_std
 
 
 def score_one_episode(onset_times_ns, ref, sensor, classifier, cls_classes,
-                      cls_means, cls_stds, device, target_rate_hz):
+                      cls_means, cls_stds, device, target_rate_hz, onset_scores=None):
     windows = cut_classifier_windows(sensor, onset_times_ns, target_rate_hz=target_rate_hz)
     prob_vecs = classify_windows(windows, classifier, cls_means, cls_stds, device)
     pruned_onsets_ns, valid = select_windows_heuristic(
         onset_times_ns,
         prob_vecs,
+        onset_scores=onset_scores,
     )
     if pruned_onsets_ns:
         refined_times, refined_valid = refine_onsets_locally(
@@ -315,6 +322,7 @@ def score_one_episode(onset_times_ns, ref, sensor, classifier, cls_classes,
             cls_stds,
             device,
             target_rate_hz,
+            onset_scores=onset_scores,
         )
         if refined_valid:
             pruned_onsets_ns, valid = refined_times, refined_valid
@@ -482,9 +490,12 @@ def main():
                 pred_onsets_ns = [int(data["ts"][idx]) for idx in pred_ep["onsets"] if 0 <= idx < len(data["ts"])]
             gt_onsets_ns = [int(data["ts"][idx]) for idx in gt_ep["onsets"] if 0 <= idx < len(data["ts"])]
 
+            pred_scores = None
+            if pred_ep is not None:
+                pred_scores = pred_ep.get("onset_scores")
             e2e_res = score_one_episode(
                 pred_onsets_ns, ref, sensor, classifier, cls_classes,
-                cls_means, cls_stds, dev, args.target_rate_hz
+                cls_means, cls_stds, dev, args.target_rate_hz, onset_scores=pred_scores
             )
             gt_res = score_one_episode(
                 gt_onsets_ns, ref, sensor, classifier, cls_classes,

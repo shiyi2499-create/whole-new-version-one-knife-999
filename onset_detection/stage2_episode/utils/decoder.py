@@ -95,12 +95,19 @@ def decode_episodes(
         if len(onsets) < min_episode_keys:
             continue
 
+        onset_scores = _score_onsets(
+            onsets,
+            onset_probs=onset_probs,
+            energy_env=energy_env,
+            typing_probs=typing_probs,
+        )
         duration_ms = (ep_end - ep_start) / sample_rate * 1000.0
         episodes.append(
             {
                 "start": ep_start,
                 "end": ep_end,
                 "onsets": onsets,
+                "onset_scores": onset_scores,
                 "num_keys": len(onsets),
                 "duration_ms": duration_ms,
             }
@@ -114,6 +121,24 @@ def decode_episodes(
         "smoothed_preds": smoothed,
         "typing_runs": typing_runs,
     }
+
+
+def _score_onsets(onsets: List[int], onset_probs: Optional[np.ndarray], energy_env: Optional[np.ndarray], typing_probs: Optional[np.ndarray]) -> List[float]:
+    scores = []
+    for o in onsets:
+        vals = []
+        if onset_probs is not None and 0 <= o < len(onset_probs):
+            vals.append(float(onset_probs[o]))
+        if energy_env is not None and 0 <= o < len(energy_env):
+            vals.append(float(energy_env[o]))
+        if typing_probs is not None and 0 <= o < len(typing_probs):
+            vals.append(float(typing_probs[o]))
+        if not vals:
+            scores.append(1.0)
+        else:
+            # Keep onset_probs dominant when available; fall back to average scale otherwise.
+            scores.append(float(vals[0] if onset_probs is not None else np.mean(vals)))
+    return scores
 
 
 def _compute_energy_envelope(raw_imu: np.ndarray, sample_rate: int) -> np.ndarray:

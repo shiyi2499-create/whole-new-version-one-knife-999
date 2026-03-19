@@ -26,18 +26,19 @@ class EpisodeFrameLoss(nn.Module):
     """
     Dual-head loss:
       - typing_loss: weighted CE + TMSE smoothing (for episode boundary learning)
-      - onset_loss:  masked MSE against Gaussian impulse targets (for key localization)
+      - onset_loss:  CenterNet-style focal heatmap loss + local shape alignment
 
-    If onset targets are not provided (None), only the typing loss is computed.
-    This preserves backward compatibility with old training data that has no
-    onset_targets field.
+    The onset head is trained like a 1D keypoint heatmap:
+      - exact key centers (target ~= 1) receive positive focal supervision
+      - nearby Gaussian shoulders are treated as soft ignore / reduced negatives
+      - distant background is strongly penalized when it lights up
     """
 
     def __init__(self, class_weights=(1.0, 4.0), smooth_weight=0.15,
                  smooth_tau=4.0, onset_weight=2.0,
-                 onset_pos_thresh=0.55, onset_support_thresh=0.10,
-                 onset_pos_weight=6.0, onset_neg_weight=1.0,
-                 onset_shape_weight=0.35, onset_sparse_weight=0.25):
+                 onset_pos_thresh=0.85, onset_support_thresh=0.10,
+                 onset_focal_alpha=2.0, onset_focal_beta=4.0,
+                 onset_shape_weight=0.20, onset_sparse_weight=0.10):
         super().__init__()
         w = torch.tensor(class_weights, dtype=torch.float32)
         self.register_buffer('weights', w)
@@ -46,8 +47,8 @@ class EpisodeFrameLoss(nn.Module):
         self.onset_weight = onset_weight
         self.onset_pos_thresh = onset_pos_thresh
         self.onset_support_thresh = onset_support_thresh
-        self.onset_pos_weight = onset_pos_weight
-        self.onset_neg_weight = onset_neg_weight
+        self.onset_focal_alpha = onset_focal_alpha
+        self.onset_focal_beta = onset_focal_beta
         self.onset_shape_weight = onset_shape_weight
         self.onset_sparse_weight = onset_sparse_weight
 
@@ -84,31 +85,38 @@ class EpisodeFrameLoss(nn.Module):
         onset_loss = torch.tensor(0.0, device=typing_logits.device)
         if onset_logits is not None and onset_targets is not None:
             onset_probs = torch.sigmoid(onset_logits.squeeze(1))  # [B, T]
-
-            # Hard peak mask: only the center of each Gaussian should really be
-            # "on". This prevents the model from learning a wide elevated band.
             peak_mask = (onset_targets >= self.onset_pos_thresh).float()
             support_mask = (onset_targets >= self.onset_support_thresh).float()
-            neg_mask = mask * (1.0 - support_mask)
-
             eps = 1e-6
-            bce_pos = -(peak_mask * torch.log(onset_probs + eps))
-            bce_neg = -((1.0 - peak_mask) * torch.log(1.0 - onset_probs + eps))
-            bce = (
-                self.onset_pos_weight * (bce_pos * mask).sum() +
-                self.onset_neg_weight * (bce_neg * mask).sum()
-            ) / (mask.sum() + 1e-8)
 
-            # Keep the predicted peak shape locally aligned only near true peaks.
+            # CenterNet-style focal heatmap loss in 1D. Exact centers are
+            # positives; Gaussian shoulders reduce the penalty on nearby
+            # negatives so the model can stay sharp without lighting the full
+            # episode plateau.
+            pos_term = -torch.log(onset_probs + eps)
+            pos_term = pos_term * ((1.0 - onset_probs) ** self.onset_focal_alpha) * peak_mask
+
+            neg_weights = ((1.0 - onset_targets).clamp(min=0.0)) ** self.onset_focal_beta
+            neg_mask = mask * (1.0 - peak_mask)
+            neg_term = -torch.log(1.0 - onset_probs + eps)
+            neg_term = neg_term * (onset_probs ** self.onset_focal_alpha) * neg_weights * neg_mask
+
+            num_pos = (peak_mask * mask).sum()
+            focal = (pos_term * mask).sum() + neg_term.sum()
+            focal = focal / (num_pos + 1e-8)
+
+            # Keep local Gaussian shoulder shape near peak support, but keep it
+            # clearly secondary to the sparse focal objective.
             sq_err = (onset_probs - onset_targets) ** 2
             shape_loss = (sq_err * support_mask * mask).sum() / (
                 (support_mask * mask).sum() + 1e-8
             )
 
-            # Explicitly punish non-zero background away from peak support.
-            sparse_loss = (onset_probs * neg_mask).sum() / (neg_mask.sum() + 1e-8)
+            # Mild background sparsity away from any Gaussian support.
+            far_neg_mask = mask * (1.0 - support_mask)
+            sparse_loss = (onset_probs * far_neg_mask).sum() / (far_neg_mask.sum() + 1e-8)
 
-            onset_loss = bce + self.onset_shape_weight * shape_loss + self.onset_sparse_weight * sparse_loss
+            onset_loss = focal + self.onset_shape_weight * shape_loss + self.onset_sparse_weight * sparse_loss
 
         return typing_loss + self.onset_weight * onset_loss, {
             'typing_loss': typing_loss.item(),
