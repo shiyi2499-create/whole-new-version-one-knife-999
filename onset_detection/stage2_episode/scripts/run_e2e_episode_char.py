@@ -85,14 +85,21 @@ def classify_windows(windows, classifier, means, stds, device):
     return out
 
 
-def cluster_windows_by_time(onset_times_ns, prob_vecs, cluster_gap_ms=140.0):
-    """
-    Merge near-duplicate onset candidates before count pruning.
+# Empirical priors estimated from the current real mixed_training set.
+# 40 password episodes: 39 with 8 keys, 1 with 9 keys.
+# Median inter-key interval is about 2.58 s. We use these only as soft priors
+# inside sequence-level subset selection, not as hard protocol constraints.
+EMPIRICAL_IKI_MEDIAN_S = 1.29
+EMPIRICAL_IKI_LOG_SIGMA = 0.20
+EMPIRICAL_COUNT_PAD = 1
 
-    If several predicted onsets land within a very short time span, they are
-    much more likely to be repeated detections of the same physical keypress
-    than genuinely distinct characters. Keep only the classifier-strongest
-    member of each cluster.
+
+def cluster_windows_by_time(onset_times_ns, prob_vecs, cluster_gap_ms=90.0):
+    """
+    Merge only near-duplicate onset candidates before sequence decoding.
+
+    This should collapse repeated detections of the same physical keypress, but
+    should not also serve as the main count-control mechanism.
     """
     valid = [(i, onset_times_ns[i], prob_vecs[i]) for i in range(len(prob_vecs)) if prob_vecs[i] is not None]
     if not valid:
@@ -118,38 +125,119 @@ def cluster_windows_by_time(onset_times_ns, prob_vecs, cluster_gap_ms=140.0):
     return keep_times, keep_probs
 
 
-def prune_windows_with_classifier(onset_times_ns, prob_vecs, max_keys=None):
-    """
-    Drop obviously redundant windows when Stage 2 still over-fires.
+def estimate_plausible_key_count_range(onset_times_ns):
+    if len(onset_times_ns) <= 1:
+        k = max(1, len(onset_times_ns))
+        return k, k, k
+    span_s = max((onset_times_ns[-1] - onset_times_ns[0]) / 1e9, 0.0)
+    expected = int(round(span_s / EMPIRICAL_IKI_MEDIAN_S)) + 1
+    expected = int(np.clip(expected, 4, 12))
+    lower = max(1, expected - EMPIRICAL_COUNT_PAD)
+    upper = min(max(expected + EMPIRICAL_COUNT_PAD, lower), 12)
+    return lower, expected, upper
 
-    We keep chronology, but choose the strongest classifier-supported windows
-    when the predicted count is implausibly large for one password episode.
-    """
-    clustered_times, clustered_probs = cluster_windows_by_time(onset_times_ns, prob_vecs)
+
+def estimate_plausible_key_upper_heuristic(onset_times_ns):
+    if len(onset_times_ns) <= 2:
+        return len(onset_times_ns)
+    span_s = max((onset_times_ns[-1] - onset_times_ns[0]) / 1e9, 0.0)
+    expected = int(round(span_s * 0.95)) + 1
+    expected = int(np.clip(expected, 2, 10))
+    upper = max(expected + 1, int(round(expected * 1.15)))
+    return min(upper, 12)
+
+
+def select_windows_heuristic(onset_times_ns, prob_vecs):
+    clustered_times, clustered_probs = cluster_windows_by_time(onset_times_ns, prob_vecs, cluster_gap_ms=140.0)
     valid = list(zip(clustered_times, clustered_probs))
     if not valid:
         return [], []
-
+    max_keys = estimate_plausible_key_upper_heuristic(clustered_times)
     if max_keys is None or len(valid) <= max_keys:
         return [t for t, _ in valid], [p for _, p in valid]
-
     scores = np.array([float(np.max(p)) for _, p in valid], dtype=np.float64)
     keep_local = np.argsort(scores)[-max_keys:]
     keep_local = sorted(keep_local)
     return [valid[k][0] for k in keep_local], [valid[k][1] for k in keep_local]
 
 
-def estimate_plausible_key_upper(onset_times_ns):
-    if len(onset_times_ns) <= 2:
-        return len(onset_times_ns)
-    span_s = max((onset_times_ns[-1] - onset_times_ns[0]) / 1e9, 0.0)
-    # Empirically, password-entry episodes in our data are much denser than the
-    # raw Stage 2 candidate stream suggests. Use a conservative upper bound so
-    # obviously duplicated detections do not survive into character decoding.
-    expected = int(round(span_s * 0.95)) + 1
-    expected = int(np.clip(expected, 2, 10))
-    upper = max(expected + 1, int(round(expected * 1.15)))
-    return min(upper, 12)
+def _candidate_node_score(prob_vec):
+    p = np.asarray(prob_vec, dtype=np.float64)
+    p = np.clip(p, 1e-8, 1.0)
+    top = np.sort(p)[::-1]
+    best = float(top[0])
+    top3 = float(np.sum(top[:3]))
+    entropy = float(-(p * np.log(p)).sum())
+    # Prefer confident and low-entropy windows; use both top1 and top3 mass so
+    # we do not over-penalize windows where the correct class is not rank-1.
+    return 1.4 * math.log(best) + 0.7 * math.log(top3) - 0.12 * entropy
+
+
+def _transition_score(dt_s):
+    if dt_s <= 1e-6:
+        return -8.0
+    log_dt = math.log(dt_s)
+    mu = math.log(EMPIRICAL_IKI_MEDIAN_S)
+    z = (log_dt - mu) / EMPIRICAL_IKI_LOG_SIGMA
+    return -0.5 * z * z
+
+
+def select_windows_with_sequence_dp(onset_times_ns, prob_vecs):
+    clustered_times, clustered_probs = cluster_windows_by_time(onset_times_ns, prob_vecs)
+    valid = list(zip(clustered_times, clustered_probs))
+    if not valid:
+        return [], []
+    if len(valid) <= 2:
+        return [t for t, _ in valid], [p for _, p in valid]
+
+    lower, expected, upper = estimate_plausible_key_count_range([t for t, _ in valid])
+    n = len(valid)
+    upper = min(upper, n)
+    lower = min(lower, upper)
+
+    times_s = np.array([t / 1e9 for t, _ in valid], dtype=np.float64)
+    node = np.array([_candidate_node_score(p) for _, p in valid], dtype=np.float64)
+
+    best_total = -1e18
+    best_path = None
+
+    for k in range(lower, upper + 1):
+        dp = np.full((k, n), -1e18, dtype=np.float64)
+        prev = np.full((k, n), -1, dtype=np.int32)
+        dp[0, :] = node
+        for m in range(1, k):
+            for j in range(m, n):
+                best_score = -1e18
+                best_i = -1
+                for i in range(m - 1, j):
+                    trans = _transition_score(times_s[j] - times_s[i])
+                    score = dp[m - 1, i] + node[j] + trans
+                    if score > best_score:
+                        best_score = score
+                        best_i = i
+                dp[m, j] = best_score
+                prev[m, j] = best_i
+
+        count_prior = -0.65 * ((k - expected) ** 2)
+        end_j = int(np.argmax(dp[k - 1, :]))
+        total = float(dp[k - 1, end_j] + count_prior)
+        if total > best_total:
+            best_total = total
+            idxs = [end_j]
+            cur = end_j
+            for m in range(k - 1, 0, -1):
+                cur = int(prev[m, cur])
+                if cur < 0:
+                    idxs = None
+                    break
+                idxs.append(cur)
+            if idxs is not None:
+                idxs = list(reversed(idxs))
+                best_path = idxs
+
+    if not best_path:
+        return [t for t, _ in valid], [p for _, p in valid]
+    return [valid[i][0] for i in best_path], [valid[i][1] for i in best_path]
 
 
 def levenshtein(a, b):
@@ -171,15 +259,65 @@ def levenshtein(a, b):
 SEQ_HIT_CUTOFFS = (10, 50, 100)
 
 
+def _window_quality(prob_vec):
+    p = np.asarray(prob_vec, dtype=np.float64)
+    p = np.clip(p, 1e-8, 1.0)
+    top = np.sort(p)[::-1]
+    return float(1.5 * math.log(top[0]) + 0.8 * math.log(np.sum(top[:3])))
+
+
+def refine_onsets_locally(onset_times_ns, sensor, classifier, cls_means, cls_stds, device,
+                          target_rate_hz, shift_ms_candidates=None):
+    if not onset_times_ns:
+        return [], []
+    if shift_ms_candidates is None:
+        shift_ms_candidates = [-80, -60, -40, -20, 0, 20, 40, 60, 80]
+
+    refined_times = []
+    refined_probs = []
+    prev_t = None
+    min_gap_ns = int(180e6)
+    for base_t in onset_times_ns:
+        cand_times = []
+        for s_ms in shift_ms_candidates:
+            t = int(base_t + s_ms * 1e6)
+            if prev_t is not None and t - prev_t < min_gap_ns:
+                continue
+            cand_times.append(t)
+        if not cand_times:
+            cand_times = [base_t]
+        windows = cut_classifier_windows(sensor, cand_times, target_rate_hz=target_rate_hz)
+        probs = classify_windows(windows, classifier, cls_means, cls_stds, device)
+        valid = [(t, p) for t, p in zip(cand_times, probs) if p is not None]
+        if not valid:
+            continue
+        best_t, best_p = max(valid, key=lambda x: _window_quality(x[1]))
+        refined_times.append(best_t)
+        refined_probs.append(best_p)
+        prev_t = best_t
+    return refined_times, refined_probs
+
+
 def score_one_episode(onset_times_ns, ref, sensor, classifier, cls_classes,
                       cls_means, cls_stds, device, target_rate_hz):
     windows = cut_classifier_windows(sensor, onset_times_ns, target_rate_hz=target_rate_hz)
     prob_vecs = classify_windows(windows, classifier, cls_means, cls_stds, device)
-    pruned_onsets_ns, valid = prune_windows_with_classifier(
+    pruned_onsets_ns, valid = select_windows_heuristic(
         onset_times_ns,
         prob_vecs,
-        max_keys=estimate_plausible_key_upper(onset_times_ns),
     )
+    if pruned_onsets_ns:
+        refined_times, refined_valid = refine_onsets_locally(
+            pruned_onsets_ns,
+            sensor,
+            classifier,
+            cls_means,
+            cls_stds,
+            device,
+            target_rate_hz,
+        )
+        if refined_valid:
+            pruned_onsets_ns, valid = refined_times, refined_valid
 
     result = {
         "reference": ref,

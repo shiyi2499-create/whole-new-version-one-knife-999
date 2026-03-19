@@ -179,6 +179,69 @@ def _detect_onsets_in_episode(
     return _onsets_uniform_fallback(ep_start, ep_end, min_onset_gap, sample_rate)
 
 
+EMPIRICAL_KEYS_PER_SEC = 0.43
+PEAK_LOG_GAP_SIGMA = 0.35
+
+
+def _select_peak_subset(peaks: np.ndarray, scores: np.ndarray, sample_rate: int,
+                        duration_s: float) -> np.ndarray:
+    if len(peaks) <= 2:
+        return peaks
+
+    expected = int(round(duration_s * EMPIRICAL_KEYS_PER_SEC))
+    expected = int(np.clip(expected, 2, 12))
+    lower = max(1, expected - 2)
+    upper = min(len(peaks), expected + 2)
+    if upper <= lower and len(peaks) <= upper:
+        return peaks
+
+    times_s = peaks.astype(np.float64) / max(sample_rate, 1)
+    node = np.log(np.clip(scores.astype(np.float64), 1e-8, None))
+    target_gap = max(duration_s / max(expected - 1, 1), 1e-3)
+    mu = np.log(target_gap)
+
+    best_total = -1e18
+    best_path = None
+    for k in range(lower, upper + 1):
+        dp = np.full((k, len(peaks)), -1e18, dtype=np.float64)
+        prev = np.full((k, len(peaks)), -1, dtype=np.int32)
+        dp[0, :] = node
+        for m in range(1, k):
+            for j in range(m, len(peaks)):
+                best = -1e18
+                best_i = -1
+                for i in range(m - 1, j):
+                    dt_s = max(times_s[j] - times_s[i], 1e-6)
+                    z = (np.log(dt_s) - mu) / PEAK_LOG_GAP_SIGMA
+                    trans = -0.5 * z * z
+                    cur = dp[m - 1, i] + node[j] + trans
+                    if cur > best:
+                        best = cur
+                        best_i = i
+                dp[m, j] = best
+                prev[m, j] = best_i
+        count_prior = -0.45 * ((k - expected) ** 2)
+        end = int(np.argmax(dp[k - 1]))
+        total = float(dp[k - 1, end] + count_prior)
+        if total > best_total:
+            idxs=[end]
+            cur=end
+            ok=True
+            for m in range(k-1,0,-1):
+                cur=int(prev[m,cur])
+                if cur < 0:
+                    ok=False
+                    break
+                idxs.append(cur)
+            if ok:
+                best_total=total
+                best_path=np.array(list(reversed(idxs)), dtype=np.int64)
+    if best_path is None:
+        return peaks
+    return peaks[best_path]
+
+
+
 def _onsets_from_onset_probs(
     onset_probs: np.ndarray,
     ep_start: int,
@@ -241,16 +304,8 @@ def _onsets_from_onset_probs(
             # onset head drives the decision; energy only nudges the ranking.
             scores = scores * (0.75 + 0.25 * e_norm)
 
-        # Duration-based count prior: we do not hard-code 8 keys, but we also
-        # should not accept hundreds of tiny local maxima from a broad plateau.
-        keys_per_sec = 1.15
-        expected = int(round(duration_s * keys_per_sec))
-        expected = int(np.clip(expected, 2, 24))
-        target_upper = max(expected + 2, int(round(expected * 1.35)))
-        if len(peaks) > target_upper:
-            keep = np.argsort(scores)[-target_upper:]
-            peaks = peaks[np.sort(keep)]
-
+        # Use a sequence-level peak subset selector instead of a raw top-K cap.
+        peaks = _select_peak_subset(peaks, scores, sample_rate, duration_s)
         onsets = [ep_start + int(p) for p in peaks]
         return _merge_close(sorted(set(onsets)), min_onset_gap)
 
