@@ -154,9 +154,10 @@ class SessionLoader:
     def get_protocol(self):
         return self._read_json('protocol.json')
 
-    def get_password_block(self):
-        """Returns a password typing block dict if present."""
+    def get_password_blocks(self):
+        """Returns all password typing blocks if present."""
         rows = self.get_activity_log()
+        blocks = []
         for row in rows:
             if (str(row.get('activity', '')) == 'keyboard' and
                     str(row.get('typing_style', '')) == 'password'):
@@ -173,54 +174,72 @@ class SessionLoader:
                         out['prompts'] = []
                 else:
                     out['prompts'] = []
-                return out
+                blocks.append(out)
+
+        if blocks:
+            return blocks
 
         protocol = self.get_protocol()
+        proto_blocks = []
         for seg in protocol.get('protocol', []):
             if (seg.get('activity') == 'keyboard' and
                     seg.get('typing_style') == 'password'):
-                return {
+                proto_blocks.append({
                     'start_ns': None,
                     'end_ns': None,
                     'label': seg.get('label', 'typing_2'),
                     'prompts': seg.get('prompts', []) or [],
-                }
-        return None
+                })
+        return proto_blocks
+
+    def get_password_block(self):
+        """Backward-compatible first password typing block if present."""
+        blocks = self.get_password_blocks()
+        if not blocks:
+            return None
+        return blocks[0]
 
     def split_password_groups_from_enters(self):
-        """Split a password block into groups using Enter presses as separators."""
-        block = self.get_password_block()
-        if block is None or block.get('start_ns') is None or block.get('end_ns') is None:
+        """Split all password blocks into groups using Enter presses as separators."""
+        blocks = self.get_password_blocks()
+        if not blocks:
             return []
-
-        events = [
-            e for e in self.get_press_events()
-            if block['start_ns'] <= e['ts'] <= block['end_ns']
-        ]
         groups = []
-        current = []
+        all_events = self.get_press_events()
 
-        for e in events:
-            key = str(e['key']).lower()
-            if key == 'enter':
-                if current:
-                    groups.append({
-                        'start_ns': current[0]['ts'],
-                        'end_ns': current[-1]['ts'],
-                        'keys': current[:],
-                        'num_keys': len(current),
-                    })
-                    current = []
+        for block in blocks:
+            if block.get('start_ns') is None or block.get('end_ns') is None:
                 continue
-            current.append(e)
 
-        if current:
-            groups.append({
-                'start_ns': current[0]['ts'],
-                'end_ns': current[-1]['ts'],
-                'keys': current[:],
-                'num_keys': len(current),
-            })
+            events = [
+                e for e in all_events
+                if block['start_ns'] <= e['ts'] <= block['end_ns']
+            ]
+            current = []
+
+            for e in events:
+                key = str(e['key']).lower()
+                if key == 'enter':
+                    if current:
+                        groups.append({
+                            'start_ns': current[0]['ts'],
+                            'end_ns': current[-1]['ts'],
+                            'keys': current[:],
+                            'num_keys': len(current),
+                            'label': block.get('label', 'typing_2'),
+                        })
+                        current = []
+                    continue
+                current.append(e)
+
+            if current:
+                groups.append({
+                    'start_ns': current[0]['ts'],
+                    'end_ns': current[-1]['ts'],
+                    'keys': current[:],
+                    'num_keys': len(current),
+                    'label': block.get('label', 'typing_2'),
+                })
 
         return groups
 
