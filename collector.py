@@ -47,6 +47,7 @@ class DataCollector:
     def __init__(self, config: CollectorConfig, mode: str, group: int = 0,
                  free_type_part: int = 0, free_type_parts_total: int = 16,
                  prompt_profile: str = "sentence",
+                 password_length: int = 8,
                  single_rate_gate_hz: float = 190.0,
                  free_rate_gate_hz: float = 150.0,
                  precheck_sec: float = 5.0):
@@ -56,6 +57,7 @@ class DataCollector:
         self._free_type_part = free_type_part
         self._free_type_parts_total = max(1, int(free_type_parts_total))
         self._prompt_profile = (prompt_profile or "sentence").strip().lower()
+        self._password_length = int(password_length)
         self._single_rate_gate_hz = float(single_rate_gate_hz)
         self._free_rate_gate_hz = float(free_rate_gate_hz)
         self._precheck_sec = float(precheck_sec)
@@ -465,7 +467,7 @@ class DataCollector:
     def _run_free_type_mode(self):
         from typing_prompt_profiles import get_prompt_profile
 
-        profile = get_prompt_profile(self._prompt_profile)
+        profile = get_prompt_profile(self._prompt_profile, password_length=self._password_length)
         PROMPTS = profile["prompts"]
         profile_name = profile["name"]
         profile_desc = profile["description"]
@@ -675,6 +677,8 @@ class DataCollector:
                 f.write(f"Free type part: {self._free_type_part}/{self._free_type_parts_total}\n")
             if self.mode == "free_type":
                 f.write(f"Prompt profile: {self._prompt_profile}\n")
+                if self._prompt_profile == "password":
+                    f.write(f"Password length: {self._password_length}\n")
             f.write(f"Participant: {self.cfg.PARTICIPANT_ID}\n")
             f.write(f"Start: {datetime.fromtimestamp(start_time).isoformat()}\n")
             f.write(f"End: {datetime.fromtimestamp(end_time).isoformat()}\n")
@@ -893,22 +897,37 @@ def main():
         default="sentence",
         help="Prompt profile for free_type mode: sentence | continuous | password"
     )
+    parser.add_argument(
+        "--password-length", type=int, default=8,
+        help="Password length for free_type --prompt-profile password (default: 8)"
+    )
     args = parser.parse_args()
 
     effective_free_groups = args.free_groups
     if args.mode == "free_type":
         from typing_prompt_profiles import get_prompt_profile
 
-        profile = get_prompt_profile(args.prompt_profile)
+        profile = get_prompt_profile(args.prompt_profile, password_length=args.password_length)
         if effective_free_groups <= 0:
             effective_free_groups = int(profile.get("default_groups", 16))
+
+    raw_subdir = args.raw_subdir
+    if args.mode == "free_type" and args.prompt_profile == "password" and not raw_subdir:
+        if int(args.password_length) == 8:
+            raw_subdir = os.path.join("password", "len_8")
+        else:
+            raw_subdir = os.path.join("password", f"len{int(args.password_length)}")
+
+    if args.mode == "free_type" and args.prompt_profile == "password" and args.part <= 0:
+        print("  ❌ password profile must be recorded one group at a time. Please pass --part 1..20.")
+        sys.exit(1)
 
     cfg = CollectorConfig(
         PARTICIPANT_ID=args.participant,
         REPEATS_PER_KEY=args.repeats,
         MIN_ACCEPTABLE_RATE_HZ=args.min_rate,
         ROUND=args.round,
-        RAW_SUBDIR=args.raw_subdir,
+        RAW_SUBDIR=raw_subdir,
     )
 
     print(
@@ -961,6 +980,8 @@ def main():
         print(f"  Part:        {args.part}/{max(1, effective_free_groups)}\n")
     if args.mode == "free_type":
         print(f"  Prompt set:  {args.prompt_profile}")
+        if args.prompt_profile == "password":
+            print(f"  Pw length:   {args.password_length}")
     print(f"  euid:        {os.geteuid() if hasattr(os, 'geteuid') else 'N/A'}")
     print("  Sensor path: direct SPU (preferred), macimu fallback if needed\n")
 
@@ -971,6 +992,7 @@ def main():
         free_type_part=args.part,
         free_type_parts_total=effective_free_groups,
         prompt_profile=args.prompt_profile,
+        password_length=args.password_length,
         single_rate_gate_hz=args.single_gate_rate,
         free_rate_gate_hz=args.free_gate_rate,
         precheck_sec=args.precheck_sec,

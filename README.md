@@ -7,15 +7,14 @@
 >   - [`onset_detection/stage2_claude/README.md`](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_claude/README.md)
 >   - [`onset_detection/stage2_gpt54/README.md`](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_gpt54/README.md)
 >   - [`ONSET_CODEX_HANDOFF.md`](/Users/shiyi/备份（mac_vs专用）/ONSET_CODEX_HANDOFF.md)
+>   - [`PROJECT_HANDOFF_20260322.md`](/Users/shiyi/备份（mac_vs专用）/PROJECT_HANDOFF_20260322.md)
 >
 > 当前最关键的新结论：
-> - Stage 1 coarse localization 已经成立。
-> - Stage 3 password classifier 已经成立，但还不是“满血版”。
-> - 目前系统验证最充分的是 `InceptionTime` classifier 路线。
-> - 当前 strongest verified story 是 `single_key / merged baseline + password adaptation`。
-> - `password-only` 在现有已核实实验里没有超过这条路线。
-> - 多模型系统比较、符号扩展、不同长度（不只 `len=8`）都还是明确的后续工作。
-> - mixed2 当前真正卡住的是 Stage 2，不是 Stage 1，也不是 classifier 已经做到头。
+> - Stage 3 password classifier 已经成立，而且 `len8/9/10` 多长度版本也已站住。
+> - 已知 password 段内找真正 key 峰这一步已经基本成立。
+> - 当前真正没打通的，不是 classifier，也不是段内 keyness，而是 full-stream 里哪一整段才是真正的 password。
+> - 当前最可信的 onset 主线是：`peak keyness -> keynesspool proposer -> bag/context/recoverability ranking -> recover`。
+> - 旧的 duration-aware coarse detector / pointwise segment classifier 都不再是主线。
 
 本仓库用于验证一个高价值安全假设：
 如果 Apple 设备内部未公开 IMU 传感器的振动信号可被利用来恢复键盘输入，那么这是一个具有顶会潜力的侧信道攻击方向。

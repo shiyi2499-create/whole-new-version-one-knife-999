@@ -472,10 +472,13 @@ def build_no_space_sequences(
     out = []
     for idx, seq in enumerate(sequences):
         att = attempts[idx] if idx < len(attempts) else {}
-        match = (att.get("match") or "").upper()
-        if yes_only and match and match != "YES":
+        prompt_text = normalize_sequence(att.get("prompt_text", ""))
+        typed_text = normalize_sequence(att.get("typed_text", ""))
+        match = (att.get("match") or att.get("match_status") or att.get("status") or "").upper()
+        is_success = bool(typed_text) and (match == "YES" or (not match and (not prompt_text or prompt_text == typed_text)))
+        if yes_only and not is_success:
             continue
-        ref = normalize_sequence(att.get("typed_text", ""))
+        ref = typed_text
         items = []
         for evt in seq["events"]:
             key = evt["key"]

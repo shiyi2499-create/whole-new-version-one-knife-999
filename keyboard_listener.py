@@ -68,7 +68,15 @@ class KeyboardListener:
 
     def start(self):
         """Start listening for keyboard events."""
-        from pynput import keyboard
+        try:
+            from pynput import keyboard
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "Missing dependency 'pynput'. "
+                "Use the project virtualenv to run this collector "
+                "(`source .venv/bin/activate`) or install dependencies with "
+                "`pip install -r requirements.txt`."
+            ) from exc
         trusted = self._is_accessibility_trusted()
         if trusted is False:
             print(

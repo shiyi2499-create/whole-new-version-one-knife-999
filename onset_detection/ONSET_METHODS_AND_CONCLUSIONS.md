@@ -1,5 +1,62 @@
 # Onset Methods And Conclusions
 
+## 0. Status Correction (2026-03-22)
+
+这份文档前半部分保留历史脉络，但请先用下面这组更新后的判断覆盖阅读：
+
+### 0.1 当前已经成立的
+- `Stage 3` 已成立，而且 `len8/9/10` 多长度 classifier 已站住。
+- `Stage 2` 的“已知 password 段内找真正 key 峰”已成立：
+  - `/Users/shiyi/备份（mac_vs专用）/results/stage2_peak_keyness_len8_len9_len10_v2/report.json`
+  - `exact_all_keys = 94.94%`
+  - `mean_peak_recall = 99.37%`
+  - `mean_peak_precision = 99.37%`
+- 长度/计数是可学的；no-time 长度头在 `8/9/10` 上仍然有强信号。
+
+### 0.2 当前真正没打通的
+现在最真实的瓶颈已经不是：
+- classifier
+- 段内 keyness
+- 固定窗本身
+
+而是：
+> full-stream 里哪个 candidate burst 才是真正的 password，
+> 以及 clean non-GT 条件下如何把 candidate ranking / length coupling 和 downstream recovery 对齐。
+
+### 0.3 当前最可信主线
+当前最值得继续押的主线是：
+
+```text
+full stream
+-> propose peaks
+-> peak keyness on all peaks
+-> cluster high-keyness peaks into candidate bursts
+-> bag/context/recoverability ranking
+-> choose top burst
+-> within-burst key selection
+-> fixed-window / overlap recovery
+```
+
+关键脚本：
+- `/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_segmental/scripts/train_eval_peak_keyness.py`
+- `/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_segmental/scripts/train_eval_segment_bagrank_ctx_v2.py`
+
+### 0.4 当前最新 clean non-GT 结果
+- `/Users/shiyi/备份（mac_vs专用）/results/stage2_segment_bagrank_ctx_v2_keynesspool_union_nogthint_targetv2_proxyv3/report.json`
+- baseline:
+  - `top1 = 39.22%`
+  - `top5 = 56.86%`
+  - `CER = 60.78%`
+- overlap:
+  - `top1 = 45.10%`
+  - `top5 = 58.82%`
+  - `CER = 54.90%`
+
+### 0.5 当前最该避免的误读
+- 不要再把 `Stage 1` 简化成“已经完全成立”。旧 coarse detector 存在 duration-bias 问题。
+- 不要再把问题定义成“单段 passwordness 二分类”。这条线已长期卡在 `top1 ~ 33-39%`。
+- 不要再把 `GT` 或 `GT length hint` 结果当作最终故事。
+
 这份文档专门记录 onset 方向到目前为止试过的方法、代表性结果、已经确认的结论，以及当前最可信的下一步判断。
 
 目标不是写宣传稿，而是防止后续接手时遗漏关键事实。
@@ -1076,3 +1133,176 @@ overlap refine：
 从客观角度看，这已经足以把它当作：
 - **可信的阶段性主线**
 - 以及明天继续做 `len9/10/11` 的合理基线。
+
+### 10.13 长度/计数接口问题被进一步钉死：不是长度学不会，而是主线喂法不对
+
+在加入 `len10` 后，我们继续把“自动长度/自动计数”这件事往主线里接。
+
+#### 已经确认的新增事实
+
+1. `len10` pilot 数据可用
+2. `stage3` 的 `len8 + len9 + len10` 多长度分支继续成立
+3. 显式长度头在 `8 / 9 / 10` 上可以达到很强的 held-out 表现
+
+对应结果：
+
+- `/Users/shiyi/备份（mac_vs专用）/results/password_len8_len9_len10_quick_adaptation.json`
+- `/Users/shiyi/备份（mac_vs专用）/results/length_model_len8_len9_len10_report.json`
+
+其中：
+
+- multi-length Stage3 combined:
+  - `top1 = 81.37%`
+  - `top5 = 99.61%`
+  - `CER = 18.63%`
+- explicit length head (`8/9/10`):
+  - `accuracy = 96.67%`
+
+#### 直接失败的做法
+
+最开始我们把长度头直接接到当前 non-GT 主线里，
+让它读取 **整个 coarse region** 来预测长度。
+
+这一步失败了：
+
+- `/Users/shiyi/备份（mac_vs专用）/results/stage2_overlap_single_fullstream_energy_cls_lenmodel_v1/report.json`
+
+表现会大幅掉下去，原因不是“长度不能学”，而是：
+
+> **whole coarse region 不是一个合适的长度输入接口。**
+
+对 `mixed_single len8` 来说，whole coarse region 会包含太多额外上下文，
+从而把 `len8` 误判成 `len9`。
+
+#### 真正有效的修正
+
+有效方案不是放弃长度头，而是改变它看到的输入：
+
+1. 在 coarse region 内提 raw energy peaks
+2. 按 temporal gap 聚成若干 peak clusters
+3. 选 strongest cluster
+4. 用 “cluster + context padding” 得到一个更紧凑的 subregion
+5. 让长度头对这个 subregion 做长度预测
+
+这一步已经接回：
+
+- `/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_segmental/scripts/eval_overlap_single_coarse_energy_cls.py`
+
+对应严格 no-leak rerun：
+
+- `/Users/shiyi/备份（mac_vs专用）/results/stage2_overlap_single_fullstream_energy_cls_lenmodel_v2_clusterregion/report.json`
+
+结果：
+
+- fixed-window path:
+  - `top1 = 62.50%`
+  - `top5 = 95.83%`
+  - `CER = 37.50%`
+- overlap path:
+  - `top1 = 83.33%`
+  - `top5 = 95.83%`
+  - `CER = 16.67%`
+
+并且 debug 显示：
+
+- 三条 `mixed_single len8`
+- 现在都被长度头正确判成了 `8`
+
+#### 当前最诚实的大结论
+
+这一步给出的最重要结论是：
+
+> **在 strict non-GT single 场景下，我们现在已经不再需要硬编码 `expected_keys = 8`。**
+
+更准确地说：
+
+- 仍然需要一个显式长度模块
+- 但这个长度模块已经能在当前主线里 work
+- 真正关键不是“有没有长度头”，而是“长度头看的是不是正确的 subregion”
+
+所以从现在开始，当前 single 主线的主要未解问题已经不再是：
+
+- windowing
+- fixed sample rate
+- hard-coded `8`
+
+而会转向：
+
+- `len11` 及更长长度是否继续成立
+- retry / 多条 password 时的第二条检测
+- 以及未来的跨人泛化
+
+### 10.14 新确认：已知 password 段内，peak-level keyness 基本已经打通
+
+为了验证一个更直接的问题：
+
+> 如果先假设 Stage 1 已经过了，只在 password 段内部看，  
+> 模型能不能直接学会“哪个山峰才是真 key 峰”？
+
+补做了一个更直接的监督实验。
+
+对应脚本：
+- `/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_segmental/scripts/train_eval_peak_keyness.py`
+
+对应结果：
+- `/Users/shiyi/备份（mac_vs专用）/results/stage2_peak_keyness_len8_len9_v1/dataset_summary.json`
+- `/Users/shiyi/备份（mac_vs专用）/results/stage2_peak_keyness_len8_len9_v1/report.json`
+- `/Users/shiyi/备份（mac_vs专用）/results/stage2_peak_keyness_len8_len9_v1/episode_rows.json`
+
+训练/评估数据：
+- `password/len_8`
+- `password/len9`
+- `mixed_single_training`
+- `mixed_single_len9`
+
+方法非常直接：
+
+1. 在已知 password 段内先提所有候选 peak
+2. 用 GT key timestamp 给这些 peak 打标签：
+   - 靠近真 key 的 peak = 正样本
+   - 其他 peak = 负样本
+3. 用峰附近的局部能量形状、prominence、左右 gap 等特征训练 `peak keyness` 模型
+4. 在每个 episode 里，从所有 peak 中选出 `K=len(password)` 个最像真 key 的峰
+
+#### 结果
+
+- candidate-level CV accuracy 普遍在 `0.94 ~ 1.00`
+- candidate-level AUC 普遍在 `0.99` 左右
+- episode-level aggregate：
+  - `exact_all_keys = 94.14%`
+  - `mean_peak_recall = 99.22%`
+  - `mean_peak_precision = 99.22%`
+
+进一步拆开看：
+- standalone password episodes：
+  - `exact_all_keys = 94.0%`
+  - `mean_peak_recall = 99.2%`
+  - `mean_peak_precision = 99.2%`
+- mixed single password episodes：
+  - `exact_all_keys = 100%`
+  - `mean_peak_recall = 100%`
+  - `mean_peak_precision = 100%`
+
+#### 这条结果真正说明了什么
+
+这不是小修小补，而是把 Stage 2 的问题进一步收缩了：
+
+1. **“password 段里一串山峰对应一串 key” 这件事是可学的，而且已经学得很好**
+2. 当前 Stage 2 的主问题 **不是**：
+   - 单键 classifier 太弱
+   - 也不是已知 password 段内不会找真 key 峰
+3. 当前真正没解决的，是更前面的那一步：
+   - **full-stream 里，哪一整团峰簇才是真正的 password 段**
+
+所以从更精确的分解看：
+
+- `Stage 2A`: full-stream candidate password segment proposal / ranking  
+  还没解决，是当前主瓶颈
+- `Stage 2B`: 已知 password 段内的 peak-level keyness / key picking  
+  已经基本成立
+
+这条结论很重要，因为它说明：
+
+> 现在不该再怀疑“password 段里找 key 会不会根本学不会”；  
+> 这一步已经证明是能学会的。  
+> 真正还难的是 **先把整段 password 本体从 full stream 里扣出来**。

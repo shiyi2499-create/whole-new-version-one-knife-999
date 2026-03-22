@@ -174,6 +174,7 @@ def _generate_fresh_passwords(
     n_passwords: int,
     rng: random.Random,
     used_prompts: Optional[set[str]] = None,
+    password_length: int = 8,
 ) -> list[str]:
     used = set(used_prompts or set())
     out: list[str] = []
@@ -182,7 +183,7 @@ def _generate_fresh_passwords(
     for _ in range(max_tries):
         if len(out) >= n_passwords:
             break
-        candidate = "".join(rng.choices(PASSWORD_CHARS, k=8))
+        candidate = "".join(rng.choices(PASSWORD_CHARS, k=int(password_length)))
         if candidate in used:
             continue
         out.append(candidate)
@@ -588,6 +589,7 @@ def generate_structured_protocol(
     seed: int = 42,
     duration_jitter_pct: float = 0.0,
     used_prompts: Optional[set[str]] = None,
+    password_length: int = 8,
 ) -> list[dict]:
     """
     Generate the structured ~3-minute mixed-stream protocol.
@@ -613,6 +615,7 @@ def generate_structured_protocol(
                 n_passwords=n_passwords,
                 rng=rng,
                 used_prompts=used_prompts,
+                password_length=password_length,
             )
             entry["prompts"] = passwords
             entry["prompt_instructions"] = (
@@ -629,6 +632,7 @@ def generate_single_password_protocol(
     seed: int = 42,
     duration_jitter_pct: float = 0.0,
     used_prompts: Optional[set[str]] = None,
+    password_length: int = 8,
 ) -> list[dict]:
     rng = random.Random(seed)
     protocol = []
@@ -641,6 +645,7 @@ def generate_single_password_protocol(
                 n_passwords=1,
                 rng=rng,
                 used_prompts=used_prompts,
+                password_length=password_length,
             )
             entry["prompts"] = passwords
             entry["prompt_instructions"] = (
@@ -660,6 +665,7 @@ def generate_retry_password_protocol(
     seed: int = 42,
     duration_jitter_pct: float = 0.0,
     used_prompts: Optional[set[str]] = None,
+    password_length: int = 8,
 ) -> list[dict]:
     rng = random.Random(seed)
     protocol = []
@@ -667,6 +673,7 @@ def generate_retry_password_protocol(
         n_passwords=2,
         rng=rng,
         used_prompts=used_prompts,
+        password_length=password_length,
     )
     pw_idx = 0
     for seg in DEFAULT_MIXED_RETRY_PROTOCOL:
@@ -699,6 +706,7 @@ def run_structured_mode(
     seed: int = 42,
     mode_tag: str = "mixed2",
     duration_jitter_pct: float = 0.0,
+    password_length: int = 8,
 ):
     """
     Record the structured ~3-minute mixed-stream protocol.
@@ -742,6 +750,7 @@ def run_structured_mode(
             seed=trial_seed,
             duration_jitter_pct=duration_jitter_pct,
             used_prompts=used_prompts,
+            password_length=password_length,
         )
         for seg in protocol:
             if seg.get("typing_style") == "password":
@@ -1105,6 +1114,7 @@ def run_mixed2_mode(
     output_dir: str = "data/raw/onset_mixed2",
     participant: str = "p01",
     seed: int = 42,
+    password_length: int = 8,
 ):
     return run_structured_mode(
         n_trials=n_trials,
@@ -1114,6 +1124,7 @@ def run_mixed2_mode(
         seed=seed,
         mode_tag="mixed2",
         duration_jitter_pct=0.0,
+        password_length=password_length,
     )
 
 
@@ -1124,6 +1135,7 @@ def run_mixed_training_mode(
     participant: str = "p01",
     seed: int = 42,
     duration_jitter_pct: float = DEFAULT_MIXED_TRAINING_JITTER_PCT,
+    password_length: int = 8,
 ):
     return run_structured_mode(
         n_trials=n_trials,
@@ -1133,6 +1145,7 @@ def run_mixed_training_mode(
         seed=seed,
         mode_tag="mixed_training",
         duration_jitter_pct=duration_jitter_pct,
+        password_length=password_length,
     )
 
 
@@ -1142,6 +1155,7 @@ def run_mixed_single_training_mode(
     participant: str = "p01",
     seed: int = 42,
     duration_jitter_pct: float = DEFAULT_MIXED_TRAINING_JITTER_PCT,
+    password_length: int = 8,
 ):
     return run_custom_structured_mode(
         n_trials=n_trials,
@@ -1150,7 +1164,9 @@ def run_mixed_single_training_mode(
         seed=seed,
         mode_tag="mixed_single_training",
         duration_jitter_pct=duration_jitter_pct,
-        protocol_generator=generate_single_password_protocol,
+        protocol_generator=lambda **kwargs: generate_single_password_protocol(
+            password_length=password_length, **kwargs
+        ),
     )
 
 
@@ -1160,6 +1176,7 @@ def run_mixed_retry_training_mode(
     participant: str = "p01",
     seed: int = 42,
     duration_jitter_pct: float = DEFAULT_MIXED_TRAINING_JITTER_PCT,
+    password_length: int = 8,
 ):
     return run_custom_structured_mode(
         n_trials=n_trials,
@@ -1168,7 +1185,9 @@ def run_mixed_retry_training_mode(
         seed=seed,
         mode_tag="mixed_retry_training",
         duration_jitter_pct=duration_jitter_pct,
-        protocol_generator=generate_retry_password_protocol,
+        protocol_generator=lambda **kwargs: generate_retry_password_protocol(
+            password_length=password_length, **kwargs
+        ),
     )
 
 
@@ -1255,6 +1274,8 @@ def main():
                         help="Number of structured trials to record this run (default: 1)")
     parser.add_argument("--n-passwords", type=int, default=5,
                         help="Passwords per mixed2 trial (default: 5)")
+    parser.add_argument("--password-length", type=int, default=8,
+                        help="Password length for structured password stages (default: 8)")
     parser.add_argument("--duration-jitter-pct", type=float, default=None,
                         help="Optional per-segment duration jitter for structured modes, "
                              "e.g. 0.15 means +/-15%%")
@@ -1305,6 +1326,7 @@ def main():
             output_dir=out_dir,
             participant=args.participant,
             seed=args.seed,
+            password_length=args.password_length,
         )
     elif args.mode == "mixed_training":
         out_dir = args.output_dir or "data/raw/mixed_training"
@@ -1322,9 +1344,15 @@ def main():
             participant=args.participant,
             seed=args.seed,
             duration_jitter_pct=jitter,
+            password_length=args.password_length,
         )
     elif args.mode == "mixed_single_training":
-        out_dir = args.output_dir or "data/raw/mixed_single_training"
+        if args.output_dir:
+            out_dir = args.output_dir
+        elif int(args.password_length) == 8:
+            out_dir = "data/raw/mixed_single_training"
+        else:
+            out_dir = f"data/raw/mixed_single_len{int(args.password_length)}"
         if args.project_root:
             _setup_imports(args.project_root)
             if not os.path.isabs(out_dir):
@@ -1338,9 +1366,15 @@ def main():
             participant=args.participant,
             seed=args.seed,
             duration_jitter_pct=jitter,
+            password_length=args.password_length,
         )
     elif args.mode == "mixed_retry_training":
-        out_dir = args.output_dir or "data/raw/mixed_retry_training"
+        if args.output_dir:
+            out_dir = args.output_dir
+        elif int(args.password_length) == 8:
+            out_dir = "data/raw/mixed_retry_training"
+        else:
+            out_dir = f"data/raw/mixed_retry_len{int(args.password_length)}"
         if args.project_root:
             _setup_imports(args.project_root)
             if not os.path.isabs(out_dir):
@@ -1354,6 +1388,7 @@ def main():
             participant=args.participant,
             seed=args.seed,
             duration_jitter_pct=jitter,
+            password_length=args.password_length,
         )
 
 

@@ -1,122 +1,134 @@
-# Onset Handoff For Next Codex
+# Onset Handoff For Next Codex (2026-03-22)
 
 如果你是新开的 Codex 会话，请把自己当作上一位接手者的直接延续。
 
-## 先看什么
-按这个顺序读：
-1. [README.md](/Users/shiyi/备份（mac_vs专用）/README.md)
-2. [onset_detection/README.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/README.md)
-3. [onset_detection/stage2_claude/README.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_claude/README.md)
-4. [onset_detection/stage2_gpt54/README.md](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_gpt54/README.md)
-5. [CODE_MAP.md](/Users/shiyi/备份（mac_vs专用）/CODE_MAP.md)
+## 核心目标
 
-## 当前目标
-我们在做的是 IMU password side-channel。
-当前 onset 方向不是泛化 activity recognition，而是：
-- Stage 1: 从 mixed2 连续流里圈出 password coarse block
-- Stage 2: 在 coarse block 内恢复 5 条 password 的结构与 onset
-- Stage 3: 用现有 classifier 恢复字符
+我们当前真正想做的是：
 
-## 当前已经确认成立的事
-### Stage 1
-- coarse localization 已成立
-- mixed2 代表性结果：`Episode IoU = 0.967`
+> 录一整段连续 IMU 数据流，模型自动找出其中哪一段是 password，并恢复其中内容。
 
-### Stage 3
-- 36 类 adapted classifier 已成立
-- mixed2 GT baseline：
-  - `char_top1 = 57.5%`
-  - `char_top3 = 82.5%`
-  - `char_top5 = 87.5%`
-  - `CER = 42.5%`
-- 但请额外记住：
-  - 当前真正被系统验证跑通的是 `InceptionTime` classifier 路线
-  - 目前验证到的 strongest story 是 `single_key / merged baseline + password adaptation`
-  - `password-only` 训练在现有已核实实验里并没有超过这条 baseline+adaptation 路线
-  - 多模型对比和“更满血的 password classifier”还没有系统做完
-  - 当前最成熟的是 `36` 类、`len=8` 这一档；符号集、更广字符空间、不同长度都还是后续待做项
+请注意：
+- 不要把 GT 段、GT key timestamp 当作最终结果
+- 这些只能用于训练监督、上界分析或模块诊断
+- 最终 claim 必须是 non-GT / full-stream automatic
 
-## 当前真正的瓶颈
-- Stage 2
+## 当前全局判断
 
-## 我们已经试过什么
-### 历史 heuristic / energy-valley
-入口：
-- [onset_detection/password_segment_detector.py](/Users/shiyi/备份（mac_vs专用）/onset_detection/password_segment_detector.py)
+### 已经站住的
+1. `Stage 3` 已站住
+   - 多长度 classifier (`len8/9/10`) 已经很强
+2. `Stage 2` 的“已知 password 段内找 key”已基本站住
+   - `exact_all_keys ≈ 94.94%`
+   - 这说明模型已经学会“哪个峰是真 key”
+3. 长度/计数是可学的
+   - `8/9/10` 的 no-time 长度模型仍然能做到强准确率
 
-结论：
-- 证明了 coarse-to-fine 思路有一定价值
-- 但没有真正解决 mixed2 Stage 2
+### 当前真正没打通的
+> `Stage 1 / Stage2 边界`：在 full-stream 里，哪一整段 candidate burst 才是真正的 password，并且这段的长度/完整性要和 downstream recoverability 对齐。
 
-### Claude branch
-目录：
-- [onset_detection/stage2_claude](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_claude)
+## 最重要的当前代码
 
-结论：
-- 已真正接进 Path B
-- CTC 路线在 mixed2 上很差
-- 当前保留作 baseline
+### 关键主线
+- `/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_segmental/scripts/train_eval_peak_keyness.py`
+- `/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_segmental/scripts/train_eval_segment_bagrank_ctx_v2.py`
 
-### GPT branch
-目录：
-- [onset_detection/stage2_gpt54](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_gpt54)
+### 关键辅助
+- `/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_segmental/length_model.py`
+- `/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_segmental/scripts/train_length_model.py`
+- `/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_segmental/scripts/visualize_mixed_single_session.py`
 
-结论：
-- dense structured 路线比 Claude 更有希望
-- 但仍未解决 mixed2
-- 后续 top-K global rerank 也没有根本救回来
+### 不要再当主线的旧方向
+- pointwise segment binary classification
+- 旧 duration-aware coarse detector
+- 纯 heuristic valley/open grouping
+- 旧 CTC / episode / rebuild 分支（保留做 baseline，但不是当前最值钱的主线）
 
-## 当前最可信的新判断
-不要再默认问题只是 decoder 或阈值。
-当前最可能的根因是：
-- Stage 2 的训练任务定义不对
-- Stage 2 的训练分布和 mixed2 测试分布没有真正对齐
+## 最新最该记住的结果
 
-这和 earlier classifier 路线里：
-- single_key 不做 password adaptation
-- 直接测 password 会失败
-是同一逻辑
+### 1. 已知 password 段内找 key
+- `/Users/shiyi/备份（mac_vs专用）/results/stage2_peak_keyness_len8_len9_len10_v2/report.json`
+- `exact_all_keys = 94.94%`
+- `mean_peak_recall = 99.37%`
+- `mean_peak_precision = 99.37%`
 
-同时不要误读成“classifier 已经做到头了”：
-- 现阶段更准确的说法是：classifier 已证明可用，但不是已经榨干上限
-- mixed2 当前更大的主矛盾仍然是 Stage 2
+### 2. 当前 clean non-GT 主线
+- `/Users/shiyi/备份（mac_vs专用）/results/stage2_segment_bagrank_ctx_v2_keynesspool_union_nogthint_targetv2_proxyv3/report.json`
+- `baseline top1 = 39.22%`
+- `baseline top5 = 56.86%`
+- `baseline CER = 60.78%`
+- `overlap top1 = 45.10%`
+- `overlap top5 = 58.82%`
+- `overlap CER = 54.90%`
 
-## 当前最被认可的新方向
-保留：
-- Stage 1
-- Stage 3
+### 3. 当前 best candidate oracle（同口径）
+- `/Users/shiyi/备份（mac_vs专用）/results/stage2_segment_bagrank_ctx_v2_keynesspool_union_oracle_check.json`
+- `mean_best = 0.7381`
+- `ge_0_75 = 0.6667`
+- `ge_0_90 = 0.6667`
 
-重建：
-- Stage 2
+## 当前 refined diagnosis
 
-更具体地说：
-- mixed-style Stage 2 训练数据 / pseudo mixed training
-- Stage 2 拆成：
-  - `2A`: password group segmentation
-  - `2B`: onset detection within each group
+不要再把问题说成“模型不够大”或“信号不够强”。
+现在更准确的判断是：
 
-## 你接下来应该怎么做
-### 第一步
-先浏览：
-- `onset_detection/`
-- `onset_detection/stage2_claude/`
-- `onset_detection/stage2_gpt54/`
+1. `peak keyness` 已经学到本质
+2. `keynesspool` proposer 是当前最对的 Stage1/Stage2 主方向
+3. 当前剩下的问题分成两类：
+   - candidate completeness：真 password burst 是否完整进池
+   - clean ranking / length coupling：好候选已经在池里时，如何让它稳定排第 1
 
-不要急着修旧 heuristic。
+## 已吸收但要谨慎使用的外部思路
 
-### 第二步
-先回答：
-- 现有数据结构能不能支持 mixed-style Stage 2 重建？
-- 是先做 pseudo mixed training，还是直接定义新的 `mixed_training` 采集协议？
-- `2A / 2B` 的数据构造和训练入口应该如何落到当前代码树？
+来自 Claude / GPT Pro 的思路中，当前确认有价值的只有这些：
+- bag/listwise ranking
+- context
+- recoverability target
 
-### 第三步
-如果你要写代码，优先做：
-- 新的 Stage 2 数据构造
-- 新的 `2A / 2B` 训练脚手架
-- 不要覆盖现有 Claude / GPT 分支，把它们保留作 baseline
+当前不应该直接照搬的：
+- 假设用户是“快速打字”的 proposer 改动
+- 用 `cluster_score_sum` 偏向大簇的打分
+- 脱离我们真实代码骨架、另起一整套 stage1 代码
 
-## 注意
-- `mixed2` 当前应视为 held-out 连续流测试目标，不要直接混进训练
-- 不要再把 Stage 1 和 Stage 3 当主问题去改
-- 当前最值得怀疑和重建的是 Stage 2
+## 接下来最值得做的事情
+
+只继续做下面这条线：
+
+```text
+full stream
+-> propose peaks
+-> peak keyness on all peaks
+-> cluster high-keyness peaks into candidate bursts
+-> bag/context/recoverability ranking
+-> choose top burst
+-> within-burst key selection
+-> fixed-window / overlap recovery
+```
+
+更具体说：
+1. 固定 `keynesspool` proposer，不再回头折腾旧 coarse detector
+2. 继续加强 candidate completeness，尤其是 hard case 的完整 burst 保留
+3. 继续加强 clean non-GT 下的 ranking / length coupling
+4. 先把 `single len8/9/10` 打稳，再回到 `retry`
+
+## 不要丢掉的旧研究资产
+
+不要删掉任何已有研究内容，包括但不限于：
+- `stage2_claude`
+- `stage2_gpt54`
+- `stage2_episode`
+- `stage2_ctc`
+- `stage2_open`
+- `stage2_rebuild`
+- 之前的 mixed2 / classifier / audit / length 文档
+
+这些不是当前主线，但它们记录了哪些方向已经证伪、哪些模块曾经有效。
+
+## 快速阅读顺序
+
+1. `/Users/shiyi/备份（mac_vs专用）/README.md`
+2. 本文件
+3. `/Users/shiyi/备份（mac_vs专用）/onset_detection/README.md`
+4. `/Users/shiyi/备份（mac_vs专用）/onset_detection/ONSET_METHODS_AND_CONCLUSIONS.md`
+5. `/Users/shiyi/备份（mac_vs专用）/onset_detection/STAGE1_SINGLE_NONGT_AUDIT_20260321.md`
+6. `/Users/shiyi/备份（mac_vs专用）/onset_detection/LEN9_STAGE3_AND_LENGTH_NOTE_20260321.md`
