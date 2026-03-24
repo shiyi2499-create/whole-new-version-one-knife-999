@@ -462,6 +462,54 @@ def _build_password_attempt_records(
     return records
 
 
+def _build_onset_negative_records(
+    root: str,
+    feature_mode: str,
+    target_count: int,
+    duration_s_range: tuple[float, float] = (1.2, 6.0),
+) -> list[SessionRecord]:
+    records: list[SessionRecord] = []
+    if not root:
+        return records
+    session_paths = sorted(set(discover_sessions(root)))
+    target_per_session = max(1, int(np.ceil(target_count / max(len(session_paths), 1)))) if target_count > 0 else 8
+    for session_path in session_paths:
+        loader = SessionLoader(session_path)
+        ts_ns, imu = loader.get_imu()
+        if len(ts_ns) < 16:
+            continue
+        sr = estimate_sample_rate_hz(ts_ns)
+        total_s = float((ts_ns[-1] - ts_ns[0]) * 1e-9)
+        if total_s < duration_s_range[0]:
+            continue
+        draws = max(2, min(24, target_per_session, int(total_s // max(duration_s_range[0], 1.0))))
+        for draw_idx in range(draws):
+            dur_s = rng.uniform(*duration_s_range)
+            span = int(round(dur_s * sr))
+            if span >= len(imu) or span < 16:
+                continue
+            start = rng.randint(0, max(0, len(imu) - span - 1))
+            end = start + span
+            rec_ts = np.asarray(ts_ns[start:end], dtype=np.int64)
+            rec_imu = np.asarray(imu[start:end], dtype=np.float32)
+            features = _build_dense_features(rec_imu, sr, feature_mode=feature_mode)
+            session_id = f"{Path(session_path).name}::neg{draw_idx:02d}"
+            records.append(
+                SessionRecord(
+                    session_id=session_id,
+                    session_path=str(session_path),
+                    sample_rate_hz=float(sr),
+                    timestamps_ns=rec_ts,
+                    features=features,
+                    labels=np.zeros(len(rec_ts), dtype=np.float32),
+                    gt_segments=[],
+                )
+            )
+            if target_count > 0 and len(records) >= target_count:
+                return records
+    return records
+
+
 class FullStreamDataset(Dataset):
     def __init__(
         self,
@@ -951,13 +999,17 @@ def train(args) -> None:
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    train_records = _build_session_records(
-        roots=args.train_mixed_dirs,
-        pre_pad_ms=args.label_pre_pad_ms,
-        post_pad_ms=args.label_post_pad_ms,
-        feature_mode=args.feature_mode,
-        min_password_len=args.min_password_len,
-    )
+    train_records: list[SessionRecord] = []
+    if args.train_mixed_dirs:
+        train_records.extend(
+            _build_session_records(
+                roots=args.train_mixed_dirs,
+                pre_pad_ms=args.label_pre_pad_ms,
+                post_pad_ms=args.label_post_pad_ms,
+                feature_mode=args.feature_mode,
+                min_password_len=args.min_password_len,
+            )
+        )
     if args.train_password_dirs:
         password_records = _build_password_attempt_records(
             roots=args.train_password_dirs,
@@ -970,6 +1022,17 @@ def train(args) -> None:
             require_match=not args.allow_unmatched_password_attempts,
         )
         train_records.extend(password_records)
+    if args.train_onset_negative_root:
+        target_count = int(args.train_negative_target_count)
+        if target_count <= 0:
+            target_count = max(40, len(train_records))
+        train_records.extend(
+            _build_onset_negative_records(
+                root=args.train_onset_negative_root,
+                feature_mode=args.feature_mode,
+                target_count=target_count,
+            )
+        )
     eval_records = _build_session_records(
         roots=args.eval_dirs,
         pre_pad_ms=args.label_pre_pad_ms,
@@ -1008,6 +1071,11 @@ def train(args) -> None:
         dropout=args.dropout,
         use_attention=args.use_attention,
     ).to(device)
+    if args.init_checkpoint:
+        state = torch.load(args.init_checkpoint, map_location="cpu")
+        if isinstance(state, dict) and "model_state" in state:
+            state = state["model_state"]
+        model.load_state_dict(state, strict=True)
     criterion = DenseSegmentationLoss(
         pos_weight=args.pos_weight,
         boundary_width=args.boundary_width,
@@ -1142,7 +1210,10 @@ def train(args) -> None:
         "feature_mode": args.feature_mode,
         "train_mixed_dirs": [str(x) for x in args.train_mixed_dirs],
         "train_password_dirs": [str(x) for x in args.train_password_dirs],
+        "train_onset_negative_root": str(args.train_onset_negative_root),
+        "train_negative_target_count": int(args.train_negative_target_count),
         "eval_dirs": [str(x) for x in args.eval_dirs],
+        "init_checkpoint": str(args.init_checkpoint),
         "label_pre_pad_ms": args.label_pre_pad_ms,
         "label_post_pad_ms": args.label_post_pad_ms,
         "password_context_pre_ms": args.password_context_pre_ms,
@@ -1166,11 +1237,14 @@ def train(args) -> None:
 
 def parse_args():
     ap = argparse.ArgumentParser(description="Stage1 dense frame labeling on real full-stream IMU sessions")
-    ap.add_argument("--train_mixed_dirs", nargs="+", required=True)
+    ap.add_argument("--train_mixed_dirs", nargs="*", default=[])
     ap.add_argument("--train_password_dirs", nargs="*", default=[])
+    ap.add_argument("--train_onset_negative_root", default="")
+    ap.add_argument("--train_negative_target_count", type=int, default=0)
     ap.add_argument("--eval_dirs", nargs="+", required=True)
     ap.add_argument("--output_dir", required=True)
     ap.add_argument("--device", default="auto")
+    ap.add_argument("--init_checkpoint", default="")
 
     ap.add_argument("--label_pre_pad_ms", type=float, default=220.0)
     ap.add_argument("--label_post_pad_ms", type=float, default=380.0)
