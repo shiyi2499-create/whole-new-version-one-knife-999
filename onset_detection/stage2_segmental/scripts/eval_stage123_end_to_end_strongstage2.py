@@ -103,6 +103,7 @@ def _decode_logits(
     ref: str | None = None,
     beam_width: int = 100,
     branch_topk: int = 5,
+    sequence_hit_cutoff: int = 100,
 ) -> dict:
     probs = torch.softmax(torch.tensor(logits, dtype=torch.float32), dim=1).cpu().numpy()
     pred_idx = probs.argmax(axis=1)
@@ -117,12 +118,13 @@ def _decode_logits(
         branch_topk=branch_topk,
         beam_width=beam_width,
     )
+    store_top_n = max(10, int(sequence_hit_cutoff))
     out = {
         "prediction": pred_text,
         "mean_max_prob": float(np.mean(max_prob)) if len(max_prob) else 0.0,
         "mean_margin": float(np.mean(margin)) if len(margin) else 0.0,
         "avg_log_prob": float(np.mean([c["log_prob"] for c in seq_candidates[:1]])) if seq_candidates else -1e9,
-        "top_sequence_candidates": seq_candidates[:10],
+        "top_sequence_candidates": seq_candidates[:store_top_n],
         "topk_per_pos": [[str(classes[int(i)]) for i in row[:5]] for row in ranks.tolist()],
     }
     if ref is not None:
@@ -134,6 +136,9 @@ def _decode_logits(
         out["exact_match"] = float(ref == pred_text)
         top100 = [x["candidate"] for x in seq_candidates[:100]]
         out["sequence_top100_hit"] = float(ref in top100)
+        seq_key = f"sequence_top{int(sequence_hit_cutoff)}_hit"
+        topn = [x["candidate"] for x in seq_candidates[: max(int(sequence_hit_cutoff), 1)]]
+        out[seq_key] = float(ref in topn)
     return out
 
 
@@ -148,6 +153,9 @@ def _run_stage3_fixed(
     sample_rate_hz: float,
     local_frames: np.ndarray,
     ref: str | None,
+    beam_width: int = 100,
+    branch_topk: int = 5,
+    sequence_hit_cutoff: int = 100,
 ) -> dict | None:
     windows = []
     for frame in local_frames.tolist():
@@ -159,7 +167,14 @@ def _run_stage3_fixed(
     xb = (xb - means[None, None, :]) / (stds[None, None, :] + 1e-6)
     with torch.no_grad():
         logits = classifier(torch.tensor(xb, dtype=torch.float32, device=device)).cpu().numpy()
-    out = _decode_logits(logits, classes, ref=ref)
+    out = _decode_logits(
+        logits,
+        classes,
+        ref=ref,
+        beam_width=beam_width,
+        branch_topk=branch_topk,
+        sequence_hit_cutoff=sequence_hit_cutoff,
+    )
     out["mode"] = "fixed"
     out["windows_n"] = int(len(windows))
     return out
@@ -176,6 +191,9 @@ def _run_stage3_overlap(
     sample_rate_hz: float,
     local_frames: np.ndarray,
     ref: str | None,
+    beam_width: int = 100,
+    branch_topk: int = 5,
+    sequence_hit_cutoff: int = 100,
 ) -> dict | None:
     if len(local_frames) == 0:
         return None
@@ -187,7 +205,14 @@ def _run_stage3_overlap(
     xb = (windows - means[None, None, :]) / (stds[None, None, :] + 1e-6)
     with torch.no_grad():
         logits = classifier(torch.tensor(xb, dtype=torch.float32, device=device)).cpu().numpy()
-    dec = _decode_logits(logits, classes, ref=ref)
+    dec = _decode_logits(
+        logits,
+        classes,
+        ref=ref,
+        beam_width=beam_width,
+        branch_topk=branch_topk,
+        sequence_hit_cutoff=sequence_hit_cutoff,
+    )
     dec["mode"] = "overlap"
     dec["windows_n"] = int(len(windows))
     dec["overlap_starts"] = [float(x) for x in out["starts"].detach().cpu().tolist()]
@@ -319,6 +344,9 @@ def _decode_candidate_segment_strong(
     length_prior_weight: float = 0.15,
     keyness_model=None,
     keyness_threshold: float = 0.5,
+    beam_width: int = 100,
+    branch_topk: int = 5,
+    sequence_hit_cutoff: int = 100,
 ) -> dict:
     if keyness_model is not None:
         force_k = int(len(ref)) if (force_ref_key_count and ref is not None) else None
@@ -355,6 +383,9 @@ def _decode_candidate_segment_strong(
                 sample_rate_hz,
                 local_anchor_frames,
                 ref,
+                beam_width=beam_width,
+                branch_topk=branch_topk,
+                sequence_hit_cutoff=sequence_hit_cutoff,
             )
             overlap = _run_stage3_overlap(
                 overlap_model,
@@ -367,6 +398,9 @@ def _decode_candidate_segment_strong(
                 sample_rate_hz,
                 local_anchor_frames,
                 ref,
+                beam_width=beam_width,
+                branch_topk=branch_topk,
+                sequence_hit_cutoff=sequence_hit_cutoff,
             )
 
         anchor_debug["force_ref_key_count"] = bool(force_ref_key_count)
@@ -455,6 +489,9 @@ def _decode_candidate_segment_strong(
                 sample_rate_hz,
                 anchors_global,
                 ref,
+                beam_width=beam_width,
+                branch_topk=branch_topk,
+                sequence_hit_cutoff=sequence_hit_cutoff,
             )
             overlap_k = _run_stage3_overlap(
                 overlap_model,
@@ -467,6 +504,9 @@ def _decode_candidate_segment_strong(
                 sample_rate_hz,
                 anchors_global,
                 ref,
+                beam_width=beam_width,
+                branch_topk=branch_topk,
+                sequence_hit_cutoff=sequence_hit_cutoff,
             )
 
             lp = math.log(max(length_probs.get(int(k_hyp), 1.0 / max(len(multi_k_hypotheses), 1)), 1e-6))
@@ -609,6 +649,9 @@ def _decode_candidate_segment_strong(
             sample_rate_hz,
             local_anchor_frames,
             ref,
+            beam_width=beam_width,
+            branch_topk=branch_topk,
+            sequence_hit_cutoff=sequence_hit_cutoff,
         )
         overlap = _run_stage3_overlap(
             overlap_model,
@@ -621,6 +664,9 @@ def _decode_candidate_segment_strong(
             sample_rate_hz,
             local_anchor_frames,
             ref,
+            beam_width=beam_width,
+            branch_topk=branch_topk,
+            sequence_hit_cutoff=sequence_hit_cutoff,
         )
 
     for result in (fixed, overlap):
@@ -641,7 +687,8 @@ def _decode_candidate_segment_strong(
     }
 
 
-def _aggregate_rows(rows: list[dict]) -> dict:
+def _aggregate_rows(rows: list[dict], sequence_hit_cutoff: int = 100) -> dict:
+    seq_key = f"sequence_top{int(sequence_hit_cutoff)}_hit"
     if not rows:
         return {
             "num_rows": 0,
@@ -652,9 +699,10 @@ def _aggregate_rows(rows: list[dict]) -> dict:
             "cer": 1.0,
             "exact_match": 0.0,
             "sequence_top100_hit": 0.0,
+            seq_key: 0.0,
         }
     num_chars = int(sum(len(r["reference"]) for r in rows))
-    return {
+    out = {
         "num_rows": len(rows),
         "num_chars": num_chars,
         "char_top1": float(sum(r["char_top1"] * len(r["reference"]) for r in rows) / max(num_chars, 1)),
@@ -664,6 +712,8 @@ def _aggregate_rows(rows: list[dict]) -> dict:
         "exact_match": float(np.mean([r["reference"] == r["prediction"] for r in rows])),
         "sequence_top100_hit": float(np.mean([r.get("sequence_top100_hit", 0.0) for r in rows])),
     }
+    out[seq_key] = float(np.mean([r.get(seq_key, 0.0) for r in rows]))
+    return out
 
 
 def _pick_session_top_candidates(detail: dict, top_n: int) -> list[dict]:
@@ -671,7 +721,7 @@ def _pick_session_top_candidates(detail: dict, top_n: int) -> list[dict]:
     return sorted(preds, key=lambda x: int(x["start_frame"]))
 
 
-def _best_assignment_rows(gt_refs: list[str], cand_rows: list[dict]) -> list[dict]:
+def _best_assignment_rows(gt_refs: list[str], cand_rows: list[dict], sequence_hit_cutoff: int = 100) -> list[dict]:
     n = min(len(gt_refs), len(cand_rows))
     if n == 0:
         return []
@@ -706,6 +756,9 @@ def _best_assignment_rows(gt_refs: list[str], cand_rows: list[dict]) -> list[dic
         row["exact_match"] = float(gt_refs[i] == row["prediction"])
         top100 = [x["candidate"] for x in row.get("top_sequence_candidates", [])[:100]]
         row["sequence_top100_hit"] = float(gt_refs[i] in top100)
+        seq_key = f"sequence_top{int(sequence_hit_cutoff)}_hit"
+        topn = [x["candidate"] for x in row.get("top_sequence_candidates", [])[: max(int(sequence_hit_cutoff), 1)]]
+        row[seq_key] = float(gt_refs[i] in topn)
         rows.append(row)
     return rows
 
@@ -725,6 +778,7 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--gap_prior_s", type=float, default=1.3)
     ap.add_argument("--beam_width", type=int, default=100)
     ap.add_argument("--branch_topk", type=int, default=5)
+    ap.add_argument("--sequence_hit_cutoff", type=int, default=100)
     ap.add_argument("--oracle_align_to_ref_k", action="store_true")
     ap.add_argument("--force_ref_key_count", action="store_true")
     ap.add_argument("--multi-k", nargs="*", type=int, default=None)
@@ -803,6 +857,9 @@ def main() -> None:
                 ep.sample_rate_hz,
                 ep.key_frames,
                 ep.password,
+                beam_width=args.beam_width,
+                branch_topk=args.branch_topk,
+                sequence_hit_cutoff=args.sequence_hit_cutoff,
             )
             gt_overlap = _run_stage3_overlap(
                 overlap_model,
@@ -815,6 +872,9 @@ def main() -> None:
                 ep.sample_rate_hz,
                 ep.key_frames,
                 ep.password,
+                beam_width=args.beam_width,
+                branch_topk=args.branch_topk,
+                sequence_hit_cutoff=args.sequence_hit_cutoff,
             )
             if gt_fixed is not None:
                 r = dict(gt_fixed)
@@ -850,6 +910,9 @@ def main() -> None:
                 args.length_prior_weight,
                 keyness_model,
                 args.keyness_threshold,
+                args.beam_width,
+                args.branch_topk,
+                args.sequence_hit_cutoff,
             )
             if dec["fixed"] is not None:
                 r = dict(dec["fixed"])
@@ -902,6 +965,9 @@ def main() -> None:
                 args.length_prior_weight,
                 keyness_model,
                 args.keyness_threshold,
+                args.beam_width,
+                args.branch_topk,
+                args.sequence_hit_cutoff,
             )
             if dec["fixed"] is not None:
                 r = dict(dec["fixed"])
@@ -955,6 +1021,9 @@ def main() -> None:
                 length_prior_weight=args.length_prior_weight,
                 keyness_model=keyness_model,
                 keyness_threshold=args.keyness_threshold,
+                beam_width=args.beam_width,
+                branch_topk=args.branch_topk,
+                sequence_hit_cutoff=args.sequence_hit_cutoff,
             )
             if dec["fixed"] is not None:
                 r = dict(dec["fixed"])
@@ -966,8 +1035,16 @@ def main() -> None:
                 overlap_candidates.append(r)
 
         gt_refs = [r["password"] for r in gt_rows_sorted]
-        sess_fixed = _best_assignment_rows(gt_refs, fixed_candidates)
-        sess_overlap = _best_assignment_rows(gt_refs, overlap_candidates)
+        sess_fixed = _best_assignment_rows(
+            gt_refs,
+            fixed_candidates,
+            sequence_hit_cutoff=args.sequence_hit_cutoff,
+        )
+        sess_overlap = _best_assignment_rows(
+            gt_refs,
+            overlap_candidates,
+            sequence_hit_cutoff=args.sequence_hit_cutoff,
+        )
         for r in sess_fixed:
             r["session_id"] = session_id
         for r in sess_overlap:
@@ -986,20 +1063,23 @@ def main() -> None:
         "min_keys": args.min_keys,
         "max_keys": args.max_keys,
         "gap_prior_s": args.gap_prior_s,
+        "beam_width": args.beam_width,
+        "branch_topk": args.branch_topk,
+        "sequence_hit_cutoff": args.sequence_hit_cutoff,
         "oracle_align_to_ref_k": bool(args.oracle_align_to_ref_k),
         "force_ref_key_count": bool(args.force_ref_key_count),
         "multi_k_hypotheses": args.multi_k,
         "length_prior_weight": args.length_prior_weight if args.multi_k else None,
         "keyness_model": args.keyness_model,
         "keyness_threshold": args.keyness_threshold if args.keyness_model else None,
-        "gt_keyframes_fixed": _aggregate_rows(gt_keyframes_fixed_rows),
-        "gt_keyframes_overlap": _aggregate_rows(gt_keyframes_overlap_rows),
-        "gt_segment_fixed": _aggregate_rows(gt_fixed_rows),
-        "gt_segment_overlap": _aggregate_rows(gt_overlap_rows),
-        "stage1_bestpred_fixed": _aggregate_rows(oracle_fixed_rows),
-        "stage1_bestpred_overlap": _aggregate_rows(oracle_overlap_rows),
-        "session_top_fixed": _aggregate_rows(session_fixed_rows),
-        "session_top_overlap": _aggregate_rows(session_overlap_rows),
+        "gt_keyframes_fixed": _aggregate_rows(gt_keyframes_fixed_rows, sequence_hit_cutoff=args.sequence_hit_cutoff),
+        "gt_keyframes_overlap": _aggregate_rows(gt_keyframes_overlap_rows, sequence_hit_cutoff=args.sequence_hit_cutoff),
+        "gt_segment_fixed": _aggregate_rows(gt_fixed_rows, sequence_hit_cutoff=args.sequence_hit_cutoff),
+        "gt_segment_overlap": _aggregate_rows(gt_overlap_rows, sequence_hit_cutoff=args.sequence_hit_cutoff),
+        "stage1_bestpred_fixed": _aggregate_rows(oracle_fixed_rows, sequence_hit_cutoff=args.sequence_hit_cutoff),
+        "stage1_bestpred_overlap": _aggregate_rows(oracle_overlap_rows, sequence_hit_cutoff=args.sequence_hit_cutoff),
+        "session_top_fixed": _aggregate_rows(session_fixed_rows, sequence_hit_cutoff=args.sequence_hit_cutoff),
+        "session_top_overlap": _aggregate_rows(session_overlap_rows, sequence_hit_cutoff=args.sequence_hit_cutoff),
     }
     with open(out_dir / "report.json", "w", encoding="utf-8") as f:
         json.dump(report, f, ensure_ascii=False, indent=2)

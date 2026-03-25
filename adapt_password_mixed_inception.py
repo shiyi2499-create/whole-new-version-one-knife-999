@@ -15,6 +15,7 @@ import copy
 import json
 import os
 import sys
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -110,6 +111,49 @@ def _metrics_subset(metrics: dict) -> dict:
     return {k: metrics[k] for k in keep if k in metrics}
 
 
+def _expand_hard_chars(groups: list[str], class_to_idx: dict[str, int]) -> list[str]:
+    chars: list[str] = []
+    seen: set[str] = set()
+    for group in groups:
+        for ch in str(group):
+            if ch in class_to_idx and ch not in seen:
+                seen.add(ch)
+                chars.append(ch)
+    return chars
+
+
+def _oversample_target_windows(
+    X: np.ndarray,
+    y: np.ndarray,
+    target_indices: set[int],
+    factor: int,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    info = {
+        "enabled": bool(target_indices and factor > 1 and len(X) > 0),
+        "factor": int(factor),
+        "num_target_before": 0,
+        "num_target_after": 0,
+        "num_total_before": int(len(X)),
+        "num_total_after": int(len(X)),
+    }
+    if not info["enabled"]:
+        return X, y, info
+
+    mask = np.asarray([int(lbl) in target_indices for lbl in y.tolist()], dtype=bool)
+    target_count = int(mask.sum())
+    info["num_target_before"] = target_count
+    if target_count == 0:
+        return X, y, info
+
+    X_dup = np.repeat(X[mask], factor - 1, axis=0)
+    y_dup = np.repeat(y[mask], factor - 1, axis=0)
+    X_new = np.concatenate([X, X_dup], axis=0)
+    y_new = np.concatenate([y, y_dup], axis=0)
+    info["num_target_after"] = int(target_count * factor)
+    info["num_total_after"] = int(len(X_new))
+    return X_new, y_new, info
+
+
 def parse_args():
     ap = argparse.ArgumentParser(description="Stage3 mixed-scene adaptation")
     ap.add_argument("--device", choices=["auto", "cpu", "mps", "cuda"], default="auto")
@@ -128,6 +172,8 @@ def parse_args():
     ap.add_argument("--head-lr", type=float, default=3e-4)
     ap.add_argument("--full-lr", type=float, default=1.5e-4)
     ap.add_argument("--adapt-batch-size", type=int, default=32)
+    ap.add_argument("--hard-char-group", action="append", default=[])
+    ap.add_argument("--hard-oversample-factor", type=int, default=1)
     ap.add_argument("--seed", type=int, default=42)
     return ap.parse_args()
 
@@ -183,9 +229,48 @@ def main():
         device,
     )
 
-    all_train = standalone_train + mixed_train
-    X_train, y_train = flatten_items(all_train, class_to_idx)
-    X_train = normalize_windows(X_train, means, stds)
+    standalone_chars_before = {}
+    mixed_chars_before = {}
+    standalone_chars_after = {}
+    mixed_chars_after = {}
+
+    X_parts = []
+    y_parts = []
+
+    if standalone_train:
+        X_standalone, y_standalone = flatten_items(standalone_train, class_to_idx)
+        standalone_chars_before = {str(classes[int(k)]): int(v) for k, v in Counter(y_standalone.tolist()).items()}
+        X_standalone = normalize_windows(X_standalone, means, stds)
+        standalone_chars_after = dict(standalone_chars_before)
+        X_parts.append(X_standalone)
+        y_parts.append(y_standalone)
+
+    hard_chars = _expand_hard_chars(args.hard_char_group, class_to_idx)
+    hard_target_indices = {int(class_to_idx[ch]) for ch in hard_chars}
+    hard_oversample_info = {
+        "enabled": False,
+        "factor": int(args.hard_oversample_factor),
+        "target_chars": hard_chars,
+        "target_indices": sorted(int(x) for x in hard_target_indices),
+    }
+
+    if mixed_train:
+        X_mixed, y_mixed = flatten_items(mixed_train, class_to_idx)
+        mixed_chars_before = {str(classes[int(k)]): int(v) for k, v in Counter(y_mixed.tolist()).items()}
+        X_mixed = normalize_windows(X_mixed, means, stds)
+        X_mixed, y_mixed, over_info = _oversample_target_windows(
+            X_mixed,
+            y_mixed,
+            hard_target_indices,
+            max(int(args.hard_oversample_factor), 1),
+        )
+        mixed_chars_after = {str(classes[int(k)]): int(v) for k, v in Counter(y_mixed.tolist()).items()}
+        hard_oversample_info.update(over_info)
+        X_parts.append(X_mixed)
+        y_parts.append(y_mixed)
+
+    X_train = np.concatenate(X_parts, axis=0)
+    y_train = np.concatenate(y_parts, axis=0)
 
     model = fine_tune_on_password(
         model,
@@ -233,6 +318,11 @@ def main():
         "num_mixed_train_sequences": len(mixed_train),
         "num_mixed_holdout_sequences": len(mixed_holdout),
         "num_train_items": int(len(X_train)),
+        "hard_oversample": hard_oversample_info,
+        "standalone_char_counts_before": standalone_chars_before,
+        "standalone_char_counts_after": standalone_chars_after,
+        "mixed_char_counts_before": mixed_chars_before,
+        "mixed_char_counts_after": mixed_chars_after,
         "zero_shot_mixed_holdout": _metrics_subset(zero_shot_metrics),
         "adapted_mixed_holdout": _metrics_subset(adapted_metrics),
     }
