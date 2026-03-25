@@ -28,6 +28,14 @@ from onset_detection.stage2_segmental.model import load_external_inception
 from onset_detection.stage2_segmental.model_v2 import load_overlap_checkpoint
 
 
+def _proposal_env_window(sr: float) -> int:
+    return max(1, int(round(float(sr) * 0.10)))
+
+
+def _proposal_energy_envelope(imu: np.ndarray, sr: float) -> np.ndarray:
+    return _compute_energy_envelope(imu, _proposal_env_window(sr)).astype(np.float64)
+
+
 def resolve_device(name: str) -> torch.device:
     req = name.lower()
     if req == "auto":
@@ -243,19 +251,17 @@ def _cluster_candidates_from_stream(
     max_keys: int,
     gap_prior_s: float,
 ):
-    energy_raw = _compute_energy_envelope(imu, int(round(sample_rate_hz))).astype(np.float64)
+    energy_raw = _proposal_energy_envelope(imu, sample_rate_hz)
     candidates = []
     for smooth_s in (0.15, 0.25, 0.35, 0.5):
         smoothed = _smooth(energy_raw, max(1, int(round(sample_rate_hz * smooth_s))))
-        q50, q90, q98 = np.quantile(smoothed, [0.50, 0.90, 0.98])
+        q50, q90 = np.quantile(smoothed, [0.50, 0.90])
         prominence = max(1e-6, (q90 - q50) * 0.10)
-        height = q50 + (q98 - q50) * 0.05
         for dist_s in (0.35, 0.5, 0.7, 0.9, 1.1):
             peaks, props = find_peaks(
                 smoothed,
                 distance=max(1, int(round(sample_rate_hz * dist_s))),
                 prominence=prominence,
-                height=height,
             )
             if len(peaks) == 0:
                 continue

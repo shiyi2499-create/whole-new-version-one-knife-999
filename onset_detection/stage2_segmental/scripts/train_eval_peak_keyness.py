@@ -119,18 +119,21 @@ def _load_mixed_episodes(input_dir: str):
     return eps
 
 
+def _proposal_env_window(sr: float) -> int:
+    # Keep the envelope short enough to preserve slow password tap pulses.
+    return max(1, int(round(float(sr) * 0.10)))
+
+
 def _propose_peaks(ep, smooth_s=0.08, min_dist_s=0.035):
     sr = float(ep['sample_rate_hz'])
-    energy = _compute_energy_envelope(ep['imu'], int(round(sr))).astype(np.float64)
+    energy = _compute_energy_envelope(ep['imu'], _proposal_env_window(sr)).astype(np.float64)
     sm = _smooth(energy, max(1, int(round(sr * smooth_s))))
-    q50, q90, q98 = np.quantile(sm, [0.50, 0.90, 0.98])
+    q50, q90 = np.quantile(sm, [0.50, 0.90])
     prominence = max(1e-6, (q90 - q50) * 0.08)
-    height = q50 + (q98 - q50) * 0.03
     peaks, props = find_peaks(
         sm,
         distance=max(3, int(round(sr * min_dist_s))),
         prominence=prominence,
-        height=height,
     )
     if len(peaks) == 0:
         peaks, props = find_peaks(sm, distance=max(2, int(round(sr * 0.02))))

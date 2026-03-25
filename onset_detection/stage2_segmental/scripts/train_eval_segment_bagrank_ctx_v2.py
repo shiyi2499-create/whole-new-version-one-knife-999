@@ -26,6 +26,7 @@ import os
 import random
 import sys
 from dataclasses import dataclass
+from numpy.fft import irfft, rfft
 from pathlib import Path
 from typing import List, Optional
 
@@ -33,6 +34,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from scipy.ndimage import uniform_filter1d
 from scipy.signal import find_peaks, resample
 from sklearn.ensemble import RandomForestClassifier
 
@@ -152,6 +154,15 @@ def resolve_device(name: str) -> torch.device:
         else:
             req = 'cpu'
     return torch.device(req)
+
+
+def _proposal_env_window(sr: float) -> int:
+    # Match peak proposal: a short envelope preserves password pulses for downstream clustering.
+    return max(1, int(round(float(sr) * 0.10)))
+
+
+def _proposal_energy_envelope(imu: np.ndarray, sr: float) -> np.ndarray:
+    return _compute_energy_envelope(imu, _proposal_env_window(sr)).astype(np.float64)
 
 
 def _normalized_curve(values: np.ndarray, out_len: int = TARGET_LEN) -> np.ndarray:
@@ -420,20 +431,18 @@ def _keyness_union_candidates(
 
 
 def _legacy_cluster_candidates(imu: np.ndarray, sr: float) -> list[dict]:
-    energy_raw = _compute_energy_envelope(imu, int(round(sr))).astype(np.float64)
+    energy_raw = _proposal_energy_envelope(imu, sr)
     seen = set()
     candidates = []
     for smooth_s in (0.10, 0.15, 0.22, 0.30):
         smoothed = _smooth(energy_raw, max(1, int(round(sr * smooth_s))))
-        q50, q90, q98 = np.quantile(smoothed, [0.50, 0.90, 0.98])
+        q50, q90 = np.quantile(smoothed, [0.50, 0.90])
         prominence = max(1e-6, (q90 - q50) * 0.08)
-        height = q50 + (q98 - q50) * 0.03
         for dist_s in (0.25, 0.35, 0.50, 0.70):
             peaks, props = find_peaks(
                 smoothed,
                 distance=max(1, int(round(sr * dist_s))),
                 prominence=prominence,
-                height=height,
             )
             if len(peaks) == 0:
                 continue
@@ -466,6 +475,8 @@ def _keyness_candidates_fullstream(
     ts: np.ndarray,
     sr: float,
     peak_model,
+    strong_threshold: float = 0.35,
+    min_strong_peaks: int = 3,
 ) -> list[dict]:
     peaks, sm, _ = _propose_peaks({'imu': imu, 'sample_rate_hz': sr, 'timestamps_ns': ts})
     if len(peaks) == 0:
@@ -473,8 +484,8 @@ def _keyness_candidates_fullstream(
     Xp = np.stack([_peak_feature_vector(sm, peaks, i, sr) for i in range(len(peaks))]).astype(np.float32)
     probs = peak_model.predict_proba(Xp)[:, 1].astype(np.float32)
 
-    strong_mask = probs >= 0.35
-    if int(np.sum(strong_mask)) < 3:
+    strong_mask = probs >= float(strong_threshold)
+    if int(np.sum(strong_mask)) < int(min_strong_peaks):
         topk = min(max(6, len(peaks) // 8), len(peaks))
         strong_idx = np.argsort(probs)[-topk:]
         strong_idx = np.sort(strong_idx)
@@ -654,9 +665,98 @@ def _select_oldpool_union_candidates(
     return merged_ranked[:max_candidates_per_episode]
 
 
+def _select_primary_rescue_candidates(
+    primary_cands: list[dict],
+    rescue_cands: list[dict],
+    expected_len: int,
+    max_candidates_per_episode: int,
+    rescue_fraction: float = 0.25,
+    rescue_min: int = 4,
+    rescue_iou_threshold: float = 0.40,
+) -> list[dict]:
+    """Keep the main proposer dominant while reserving a small rescue slice.
+
+    `keynesspool` is the current primary Stage1/Stage2 direction, but our audit
+    shows there are still a few sessions where the older coarse pool contains a
+    much better full-burst candidate.  We therefore keep a protected rescue
+    budget for the secondary source instead of mixing globally and letting the
+    dominant source evict that rescue.
+    """
+    if max_candidates_per_episode <= 0:
+        return []
+
+    primary_ranked = sorted(
+        primary_cands,
+        key=lambda cand: _pre_score_candidate(cand, expected_len),
+        reverse=True,
+    )
+    rescue_ranked = sorted(
+        rescue_cands,
+        key=lambda cand: _pre_score_candidate(cand, expected_len),
+        reverse=True,
+    )
+
+    rescue_budget_cap = max(int(round(max_candidates_per_episode * rescue_fraction)), rescue_min)
+    rescue_budget = min(len(rescue_ranked), rescue_budget_cap)
+
+    rescue_selected: list[dict] = []
+    rescue_spill: list[dict] = []
+    for cand in rescue_ranked:
+        if all(_candidate_iou(cand, kept) < rescue_iou_threshold for kept in rescue_selected):
+            rescue_selected.append(cand)
+        else:
+            rescue_spill.append(cand)
+        if len(rescue_selected) >= rescue_budget:
+            break
+    if len(rescue_selected) < rescue_budget:
+        remaining_ranked = [cand for cand in rescue_ranked if cand not in rescue_selected and cand not in rescue_spill]
+        rescue_spill.extend(remaining_ranked)
+        rescue_selected.extend(rescue_spill[: rescue_budget - len(rescue_selected)])
+
+    primary_budget = min(len(primary_ranked), max_candidates_per_episode - len(rescue_selected))
+    selected = list(primary_ranked[:primary_budget]) + list(rescue_selected)
+
+    if len(selected) < max_candidates_per_episode:
+        spill = primary_ranked[primary_budget:] + rescue_spill
+        selected.extend(spill[: max_candidates_per_episode - len(selected)])
+
+    merged = _dedup_candidates(selected)
+    if len(merged) <= max_candidates_per_episode:
+        if len(merged) < max_candidates_per_episode:
+            merged_keys = {
+                (
+                    int(c['crop_start']),
+                    int(c['crop_end']),
+                    int(c.get('macro_num_peaks', c.get('cluster_num_peaks', 0))),
+                )
+                for c in merged
+            }
+            spill_ranked = primary_ranked[primary_budget:] + rescue_spill
+            for cand in spill_ranked:
+                key = (
+                    int(cand['crop_start']),
+                    int(cand['crop_end']),
+                    int(cand.get('macro_num_peaks', cand.get('cluster_num_peaks', 0))),
+                )
+                if key in merged_keys:
+                    continue
+                merged.append(cand)
+                merged_keys.add(key)
+                if len(merged) >= max_candidates_per_episode:
+                    break
+        return merged[:max_candidates_per_episode]
+
+    merged_ranked = sorted(
+        merged,
+        key=lambda cand: _pre_score_candidate(cand, expected_len),
+        reverse=True,
+    )
+    return merged_ranked[:max_candidates_per_episode]
+
+
 def propose_candidates_fullstream_v2(imu: np.ndarray, ts: np.ndarray, sample_rate_hz: float) -> list[dict]:
     del ts
-    energy = _compute_energy_envelope(imu, int(round(sample_rate_hz))).astype(np.float64)
+    energy = _proposal_energy_envelope(imu, sample_rate_hz)
     micro = _micro_segments_from_energy(energy, sample_rate_hz)
     cands = _enumerate_union_candidates(imu, energy, micro, sample_rate_hz)
     cands.extend(_legacy_cluster_candidates(imu, sample_rate_hz))
@@ -713,6 +813,78 @@ def _match_count_with_tolerance(pred_ts_ns: np.ndarray, gt_ts_ns: np.ndarray, to
     return matched
 
 
+def _compute_local_activity(imu: np.ndarray, sr: float, short_win_s: float = 0.12) -> np.ndarray:
+    win = max(3, int(round(sr * short_win_s)))
+    activity = np.zeros(len(imu), dtype=np.float64)
+    for ch in range(min(imu.shape[1], 6)):
+        col = imu[:, ch].astype(np.float64)
+        mean = uniform_filter1d(col, win)
+        sq_mean = uniform_filter1d(col ** 2, win)
+        activity += np.maximum(sq_mean - mean ** 2, 0.0)
+    return activity
+
+
+def _compute_rhythm_features(imu_seg: np.ndarray, sr: float) -> dict:
+    result = {
+        'acf_score': 0.0,
+        'regularity': 0.0,
+        'log_discreteness': 0.0,
+        'iki_cv': 3.0,
+        'n_peaks': 0,
+        'peak_density': 0.0,
+    }
+    if len(imu_seg) < max(8, int(round(sr * 1.5))):
+        return result
+
+    activity = _compute_local_activity(imu_seg, sr)
+    act_std = max(float(np.std(activity)), 1e-12)
+    peaks, _ = find_peaks(
+        activity,
+        distance=max(3, int(round(sr * 0.40))),
+        prominence=act_std * 0.20,
+    )
+    result['n_peaks'] = int(len(peaks))
+    result['peak_density'] = float(len(peaks)) / max(len(imu_seg) / max(sr, 1e-6), 0.1)
+
+    if len(peaks) >= 3:
+        ikis = np.diff(peaks.astype(np.float64)) / max(sr, 1e-6)
+        iki_mean = float(np.mean(ikis))
+        iki_cv = float(np.std(ikis) / max(iki_mean, 1e-6))
+        result['iki_cv'] = iki_cv
+        result['regularity'] = float(np.exp(-iki_cv / 0.30))
+
+    if len(peaks) >= 2:
+        peak_vals = activity[peaks]
+        guard = max(1, int(round(sr * 0.10)))
+        trough_vals = []
+        for i in range(len(peaks) - 1):
+            lo = int(peaks[i]) + guard
+            hi = int(peaks[i + 1]) - guard
+            if hi > lo:
+                trough_vals.append(float(np.mean(activity[lo:hi])))
+        if trough_vals:
+            discreteness = float(np.mean(peak_vals)) / max(float(np.mean(trough_vals)), 1e-12)
+            result['log_discreteness'] = float(np.clip(np.log(max(discreteness, 1.0)) / 5.0, 0.0, 1.0))
+
+    if len(activity) > int(round(sr * 3.0)):
+        centered = activity - float(np.mean(activity))
+        norm = float(np.sqrt(np.mean(centered ** 2)))
+        if norm > 1e-12:
+            centered = centered / norm
+            n = len(centered)
+            fft_val = rfft(centered, n=2 * n)
+            acf = irfft(fft_val * np.conj(fft_val))[:n] / n
+            min_lag = max(1, int(round(sr * 0.8)))
+            max_lag = min(n - 1, int(round(sr * 2.5)))
+            if max_lag > min_lag:
+                acf_region = acf[min_lag:max_lag + 1]
+                acf_peaks, _ = find_peaks(acf_region, prominence=0.02)
+                if len(acf_peaks) > 0:
+                    best_idx = acf_peaks[np.argmax(acf_region[acf_peaks])]
+                    result['acf_score'] = float(acf_region[best_idx])
+    return result
+
+
 def _analyze_candidate(
     candidate: dict,
     full_imu: np.ndarray,
@@ -720,12 +892,13 @@ def _analyze_candidate(
     sr: float,
     peak_model,
     expected_len: int,
+    use_rhythm_aux: bool = True,
 ):
     lo = int(candidate['crop_start'])
     hi = int(candidate['crop_end'])
     crop_imu = full_imu[lo:hi]
     crop_ts = full_ts[lo:hi]
-    energy = _compute_energy_envelope(crop_imu, int(round(sr))).astype(np.float64)
+    energy = _proposal_energy_envelope(crop_imu, sr)
     sm = _smooth(energy, max(1, int(round(sr * 0.10))))
     peaks, sm2, _ = _propose_peaks({'imu': crop_imu, 'sample_rate_hz': sr, 'timestamps_ns': crop_ts})
     peak_probs = np.zeros(len(peaks), dtype=np.float32)
@@ -753,14 +926,14 @@ def _analyze_candidate(
     ctx_pad = int(min(len(full_imu) * 0.25, max(round(crop_span * 1.6), round(sr * 1.5))))
     ctx_lo = max(0, lo - ctx_pad)
     ctx_hi = min(len(full_imu), hi + ctx_pad)
-    ctx_energy = _compute_energy_envelope(full_imu[ctx_lo:ctx_hi], int(round(sr))).astype(np.float64)
+    ctx_energy = _proposal_energy_envelope(full_imu[ctx_lo:ctx_hi], sr)
     ctx_energy = _normalized_curve(_smooth(ctx_energy, max(1, int(round(sr * 0.10)))), out_len=TARGET_LEN)
 
     inside_mean = float(np.mean(sm)) if len(sm) else 0.0
     left = full_imu[max(0, lo - int(round(sr * 0.8))):lo]
     right = full_imu[hi:min(len(full_imu), hi + int(round(sr * 0.8)))]
-    left_e = _compute_energy_envelope(left, int(round(sr))).astype(np.float64) if len(left) else np.asarray([], dtype=np.float64)
-    right_e = _compute_energy_envelope(right, int(round(sr))).astype(np.float64) if len(right) else np.asarray([], dtype=np.float64)
+    left_e = _proposal_energy_envelope(left, sr) if len(left) else np.asarray([], dtype=np.float64)
+    right_e = _proposal_energy_envelope(right, sr) if len(right) else np.asarray([], dtype=np.float64)
     left_mean = float(np.mean(left_e)) if len(left_e) else 0.0
     right_mean = float(np.mean(right_e)) if len(right_e) else 0.0
 
@@ -770,6 +943,12 @@ def _analyze_candidate(
     if len(peaks) >= 3:
         gaps = np.diff(peaks.astype(np.float64)) / max(sr, 1e-6)
         reg_cv = float(np.std(gaps) / max(np.mean(gaps), 1e-6))
+    rhythm = _compute_rhythm_features(crop_imu, sr) if use_rhythm_aux else {
+        'acf_score': 0.0,
+        'regularity': 0.0,
+        'log_discreteness': 0.0,
+        'iki_cv': 3.0,
+    }
 
     aux = np.asarray([
         float(expected_len) / 12.0,
@@ -784,6 +963,10 @@ def _analyze_candidate(
         left_mean / max(inside_mean, 1e-6),
         right_mean / max(inside_mean, 1e-6),
         abs(float(candidate.get('macro_num_peaks', len(peaks))) - float(expected_len)) / max(float(expected_len), 1.0),
+        float(rhythm['acf_score']),
+        float(rhythm['regularity']),
+        float(rhythm['log_discreteness']),
+        min(float(rhythm['iki_cv']), 3.0) / 3.0,
     ], dtype=np.float32)
 
     seq = np.concatenate([
@@ -798,6 +981,10 @@ def _analyze_candidate(
         'num_strong_peaks': int(strong_count),
         'top5_peak_prob_mean': float(topk),
         'chosen_peak_ts_ns': chosen_ts.tolist(),
+        'rhythm_acf_score': float(rhythm['acf_score']),
+        'rhythm_regularity': float(rhythm['regularity']),
+        'rhythm_log_discreteness': float(rhythm['log_discreteness']),
+        'rhythm_iki_cv': float(rhythm['iki_cv']),
     }
     return {
         'seq': seq,
@@ -807,6 +994,7 @@ def _analyze_candidate(
         'chosen_ts_ns': chosen_ts,
         'num_prop_peaks': int(len(peaks)),
         'num_strong_peaks': int(strong_count),
+        'rhythm': rhythm,
         'debug': dbg,
     }
 
@@ -862,6 +1050,9 @@ def _build_episode_bags(
     candidate_mode: str = "oldpool",
     max_candidates_per_episode: int = 32,
     use_gt_len_hint: bool = True,
+    use_rhythm_aux: bool = True,
+    keyness_strong_threshold: float = 0.35,
+    keyness_min_strong_peaks: int = 3,
 ) -> list[CandidateBag]:
     episodes = []
     for d in mixed_dirs:
@@ -897,12 +1088,29 @@ def _build_episode_bags(
                     reverse=True,
                 )[:max_candidates_per_episode]
             elif candidate_mode == "keynesspool":
-                scored_cands = _keyness_candidates_fullstream(imu, ts, sr, peak_model)
+                scored_cands = _keyness_candidates_fullstream(
+                    imu, ts, sr, peak_model,
+                    strong_threshold=keyness_strong_threshold,
+                    min_strong_peaks=keyness_min_strong_peaks,
+                )
                 scored_cands = sorted(
                     scored_cands,
                     key=lambda cand: _pre_score_candidate(cand, bag_len_hint),
                     reverse=True,
                 )[:max_candidates_per_episode]
+            elif candidate_mode == "keynesspool_oldpool":
+                keyness_cands = _keyness_candidates_fullstream(
+                    imu, ts, sr, peak_model,
+                    strong_threshold=keyness_strong_threshold,
+                    min_strong_peaks=keyness_min_strong_peaks,
+                )
+                oldpool_cands = _propose_candidates_fullstream(imu, ts, sr)
+                scored_cands = _select_primary_rescue_candidates(
+                    keyness_cands,
+                    oldpool_cands,
+                    expected_len=int(bag_len_hint) if bag_len_hint is not None else 9,
+                    max_candidates_per_episode=max_candidates_per_episode,
+                )
             else:
                 base_cands = _propose_candidates_fullstream(imu, ts, sr)
                 if candidate_mode == "oldpool_union":
@@ -943,7 +1151,11 @@ def _build_episode_bags(
                 cand_ns['crop_start_ns'] = int(ts[min(max(lo, 0), len(ts) - 1)])
                 cand_ns['crop_end_ns'] = int(ts[min(max(hi - 1, 0), len(ts) - 1)])
                 if use_gt_len_hint:
-                    analysis = _analyze_candidate(cand_ns, imu, ts, sr, peak_model, expected_len=int(cand_len_hint))
+                    analysis = _analyze_candidate(
+                        cand_ns, imu, ts, sr, peak_model,
+                        expected_len=int(cand_len_hint),
+                        use_rhythm_aux=use_rhythm_aux,
+                    )
                     utility, dbg = _candidate_recoverability_target(cand_ns, analysis, ep)
                 else:
                     k_center = int(np.clip(cand_len_hint, 4, 16))
@@ -959,7 +1171,11 @@ def _build_episode_bags(
                     best_analysis = None
                     best_dbg = None
                     for k_try in k_grid:
-                        analysis_try = _analyze_candidate(cand_ns, imu, ts, sr, peak_model, expected_len=int(k_try))
+                        analysis_try = _analyze_candidate(
+                            cand_ns, imu, ts, sr, peak_model,
+                            expected_len=int(k_try),
+                            use_rhythm_aux=use_rhythm_aux,
+                        )
                         utility_try, dbg_try = _candidate_recoverability_target(cand_ns, analysis_try, ep)
                         if utility_try > best_utility:
                             best_utility = float(utility_try)
@@ -1196,8 +1412,11 @@ def main():
     ap.add_argument('--classifier_scaler', required=True)
     ap.add_argument('--overlap_checkpoint', required=True)
     ap.add_argument('--length_model', default='')
-    ap.add_argument('--candidate_mode', choices=['oldpool', 'oldpool_union', 'v2', 'keynesspool'], default='oldpool')
+    ap.add_argument('--candidate_mode', choices=['oldpool', 'oldpool_union', 'v2', 'keynesspool', 'keynesspool_oldpool'], default='oldpool')
     ap.add_argument('--max_candidates_per_episode', type=int, default=32)
+    ap.add_argument('--disable_rhythm_aux', action='store_true')
+    ap.add_argument('--keyness_strong_threshold', type=float, default=0.35)
+    ap.add_argument('--keyness_min_strong_peaks', type=int, default=3)
     ap.add_argument('--output_dir', required=True)
     ap.add_argument('--device', default='auto')
     args = ap.parse_args()
@@ -1222,6 +1441,9 @@ def main():
         candidate_mode=args.candidate_mode,
         max_candidates_per_episode=args.max_candidates_per_episode,
         use_gt_len_hint=False,
+        use_rhythm_aux=not args.disable_rhythm_aux,
+        keyness_strong_threshold=args.keyness_strong_threshold,
+        keyness_min_strong_peaks=args.keyness_min_strong_peaks,
     )
     train_bags, val_bags = _split_bags_by_session(train_bags_all, train_ratio=0.8)
     model, best_val = train_bag_ranker(train_bags, val_bags, device)
@@ -1239,6 +1461,9 @@ def main():
         candidate_mode=args.candidate_mode,
         max_candidates_per_episode=args.max_candidates_per_episode,
         use_gt_len_hint=False,
+        use_rhythm_aux=not args.disable_rhythm_aux,
+        keyness_strong_threshold=args.keyness_strong_threshold,
+        keyness_min_strong_peaks=args.keyness_min_strong_peaks,
     )
     eval_bag_map = {(b.session_id, b.episode_id): b for b in eval_bags}
 
@@ -1353,6 +1578,9 @@ def main():
     report = {
         'mode': 'segment_bagrank_context_v2',
         'candidate_mode': args.candidate_mode,
+        'use_rhythm_aux': bool(not args.disable_rhythm_aux),
+        'keyness_strong_threshold': float(args.keyness_strong_threshold),
+        'keyness_min_strong_peaks': int(args.keyness_min_strong_peaks),
         'train_summary': {
             'num_train_bags': len(train_bags),
             'num_val_bags': len(val_bags),

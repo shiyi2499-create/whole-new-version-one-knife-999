@@ -881,9 +881,9 @@ def evaluate_posthoc_grid(
                             single = report["single_session_top1"]
                             oracle = report["all_gt_oracle"]
                             score = (
-                                float(single["mean_iou"])
-                                + 0.30 * float(single["complete_hit_rate"])
-                                + 0.10 * float(oracle["mean_best_iou"])
+                                2.0 * float(oracle["complete_hit_rate"])
+                                + float(oracle["mean_best_iou"])
+                                + 0.30 * float(single["mean_iou"])
                             )
                             bundle = {
                                 "threshold": float(thr),
@@ -1128,7 +1128,11 @@ def train(args) -> None:
             f"oracle_complete={oracle['complete_hit_rate']:.3f}"
         )
         sweep_best = None
-        score = float(single["mean_iou"]) + 0.5 * float(single["complete_hit_rate"])
+        score = (
+            2.0 * float(oracle["complete_hit_rate"])
+            + float(oracle["mean_best_iou"])
+            + 0.30 * float(single["mean_iou"])
+        )
         if args.select_by_posthoc_sweep:
             sweep_best, _, _ = evaluate_posthoc_grid(
                 model,
@@ -1285,10 +1289,10 @@ def parse_args():
     ap.add_argument("--select_by_posthoc_sweep", action="store_true")
     ap.add_argument("--sweep_thresholds", nargs="+", type=float, default=[0.5, 0.55, 0.6])
     ap.add_argument("--sweep_min_segment_s", nargs="+", type=float, default=[0.5, 0.8])
-    ap.add_argument("--sweep_merge_gap_s", nargs="+", type=float, default=[0.25, 0.4, 0.6, 0.8, 1.0])
+    ap.add_argument("--sweep_merge_gap_s", nargs="+", type=float, default=[0.25, 0.4, 0.6, 0.8, 1.0, 1.5, 2.0])
     ap.add_argument("--sweep_prob_smooth_windows", nargs="+", type=int, default=[1, 161])
-    ap.add_argument("--sweep_valley_merge_thresholds", nargs="+", type=float, default=[0.0, 0.30])
-    ap.add_argument("--sweep_valley_merge_gap_s", nargs="+", type=float, default=[0.0, 1.5])
+    ap.add_argument("--sweep_valley_merge_thresholds", nargs="+", type=float, default=[0.0, 0.15, 0.25, 0.30])
+    ap.add_argument("--sweep_valley_merge_gap_s", nargs="+", type=float, default=[0.0, 1.5, 2.0, 2.5, 3.0])
     return ap.parse_args()
 
 
