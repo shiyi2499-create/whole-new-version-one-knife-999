@@ -9,6 +9,7 @@ import os
 import sys
 from pathlib import Path
 
+import joblib
 import numpy as np
 import torch
 
@@ -34,6 +35,11 @@ from onset_detection.stage2_segmental.scripts.eval_overlap_single_coarse_energy_
     propose_energy_classifier_anchors,
     score_candidate_region_from_frames,
 )
+from onset_detection.stage2_segmental.scripts.train_eval_peak_keyness import (
+    _peak_feature_vector,
+    _propose_peaks,
+    _select_k_peaks,
+)
 from phase3_password_inception.run_password_closure_inception import (
     load_final_inception,
     topk_strings_from_prob_vectors,
@@ -54,6 +60,10 @@ def resolve_device(name: str) -> torch.device:
 
 def cer(a: str, b: str) -> float:
     return levenshtein(a, b) / max(len(a), 1)
+
+
+def load_keyness_model(path: str):
+    return joblib.load(path)
 
 
 def _extract_window_from_signal(
@@ -227,6 +237,65 @@ def _infer_expected_keys_from_region(
     return pred, debug, subregion
 
 
+def _propose_keyness_anchors(
+    raw_imu: np.ndarray,
+    sample_rate_hz: float,
+    keyness_model,
+    threshold: float,
+    min_keys: int,
+    max_keys: int,
+    gap_prior_s: float,
+    force_k: int | None = None,
+) -> tuple[np.ndarray, dict]:
+    ep = {
+        "imu": raw_imu,
+        "sample_rate_hz": float(sample_rate_hz),
+    }
+    peaks, sm, _ = _propose_peaks(ep)
+    if len(peaks) == 0:
+        return np.asarray([], dtype=np.int64), {
+            "method": "peak_keyness",
+            "num_raw_peaks": 0,
+            "selection_mode": "no_peaks",
+            "threshold": float(threshold),
+        }
+
+    feats = np.stack([
+        _peak_feature_vector(sm, peaks, i, sample_rate_hz)
+        for i in range(len(peaks))
+    ]).astype(np.float32)
+    probs = keyness_model.predict_proba(feats)[:, 1]
+
+    if force_k is not None and force_k > 0:
+        anchors = _select_k_peaks(peaks, probs, int(force_k), sample_rate_hz, gap_prior_s=gap_prior_s)
+        selection_mode = "force_k_dp"
+    else:
+        mask = probs >= float(threshold)
+        chosen = peaks[mask]
+        selection_mode = "threshold"
+        if len(chosen) < min_keys:
+            top_idx = np.argsort(-probs)[: min(min_keys, len(peaks))]
+            chosen = np.sort(peaks[top_idx])
+            selection_mode = "fallback_topk_min"
+        elif len(chosen) > max_keys:
+            chosen_idx = np.where(mask)[0]
+            top_idx = chosen_idx[np.argsort(-probs[chosen_idx])[:max_keys]]
+            chosen = np.sort(peaks[top_idx])
+            selection_mode = "clamped_max"
+        anchors = chosen
+
+    debug = {
+        "method": "peak_keyness",
+        "threshold": float(threshold),
+        "selection_mode": selection_mode,
+        "num_raw_peaks": int(len(peaks)),
+        "num_chosen": int(len(anchors)),
+        "peak_frames": [int(x) for x in peaks.tolist()],
+        "peak_probs": [float(x) for x in probs.tolist()],
+    }
+    return np.asarray(anchors, dtype=np.int64), debug
+
+
 def _decode_candidate_segment_strong(
     overlap_model,
     runtime_classifier,
@@ -248,7 +317,79 @@ def _decode_candidate_segment_strong(
     force_ref_key_count: bool,
     multi_k_hypotheses: list[int] | None = None,
     length_prior_weight: float = 0.15,
+    keyness_model=None,
+    keyness_threshold: float = 0.5,
 ) -> dict:
+    if keyness_model is not None:
+        force_k = int(len(ref)) if (force_ref_key_count and ref is not None) else None
+        local_anchor_frames, anchor_debug = _propose_keyness_anchors(
+            crop_imu,
+            sample_rate_hz,
+            keyness_model,
+            threshold=keyness_threshold,
+            min_keys=min_keys,
+            max_keys=max_keys,
+            gap_prior_s=gap_prior_s,
+            force_k=force_k,
+        )
+        local_anchor_frames = np.asarray(local_anchor_frames, dtype=np.int64)
+        candidate_score = score_candidate_region_from_frames(
+            runtime_classifier,
+            crop_imu,
+            local_anchor_frames if len(local_anchor_frames) else np.asarray([], dtype=np.int64),
+            sample_rate_hz,
+            device,
+        )
+
+        fixed = None
+        overlap = None
+        if len(local_anchor_frames):
+            fixed = _run_stage3_fixed(
+                stage3_model,
+                stage3_target_len,
+                stage3_classes,
+                stage3_means,
+                stage3_stds,
+                device,
+                crop_imu,
+                sample_rate_hz,
+                local_anchor_frames,
+                ref,
+            )
+            overlap = _run_stage3_overlap(
+                overlap_model,
+                stage3_model,
+                stage3_classes,
+                stage3_means,
+                stage3_stds,
+                device,
+                crop_imu,
+                sample_rate_hz,
+                local_anchor_frames,
+                ref,
+            )
+
+        anchor_debug["force_ref_key_count"] = bool(force_ref_key_count)
+        anchor_debug["expected_keys_used"] = None
+        anchor_debug["oracle_align_to_ref_k"] = False
+        anchor_debug["length_debug"] = {"used_length_model": False, "reason": "keyness_model_path"}
+        for result in (fixed, overlap):
+            if result is not None:
+                result["chosen_k"] = int(len(local_anchor_frames))
+                result["selected_frames"] = [int(x) for x in local_anchor_frames.tolist()]
+                result["candidate_anchor_score"] = None if candidate_score is None else float(candidate_score["score"])
+                result["candidate_mean_max_prob"] = None if candidate_score is None else float(candidate_score["mean_max_prob"])
+                result["candidate_mean_margin"] = None if candidate_score is None else float(candidate_score["mean_margin"])
+                result["pred_text_runtime"] = None if candidate_score is None else str(candidate_score["pred_text"])
+                result["length_debug"] = {"used_length_model": False, "reason": "keyness_model_path"}
+                result["anchor_debug"] = anchor_debug
+
+        return {
+            "num_proposed_peaks": int(anchor_debug.get("num_raw_peaks", 0)),
+            "fixed": fixed,
+            "overlap": overlap,
+        }
+
     inferred_keys, length_debug, length_subregion = _infer_expected_keys_from_region(
         crop_imu,
         crop_ts,
@@ -588,6 +729,8 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--force_ref_key_count", action="store_true")
     ap.add_argument("--multi-k", nargs="*", type=int, default=None)
     ap.add_argument("--length-prior-weight", type=float, default=0.15)
+    ap.add_argument("--keyness_model", default=None)
+    ap.add_argument("--keyness_threshold", type=float, default=0.5)
     return ap
 
 
@@ -610,6 +753,7 @@ def main() -> None:
     runtime_classifier = load_external_inception(args.stage3_checkpoint, args.stage3_scaler, device)
     runtime_classifier.eval()
     length_model = load_length_model(args.length_model)
+    keyness_model = load_keyness_model(args.keyness_model) if args.keyness_model else None
 
     eval_eps = build_password_episodes(args.eval_root)
     episode_map = {ep.episode_id: ep for ep in eval_eps}
@@ -704,6 +848,8 @@ def main() -> None:
                 args.force_ref_key_count,
                 args.multi_k,
                 args.length_prior_weight,
+                keyness_model,
+                args.keyness_threshold,
             )
             if dec["fixed"] is not None:
                 r = dict(dec["fixed"])
@@ -754,6 +900,8 @@ def main() -> None:
                 args.force_ref_key_count,
                 args.multi_k,
                 args.length_prior_weight,
+                keyness_model,
+                args.keyness_threshold,
             )
             if dec["fixed"] is not None:
                 r = dict(dec["fixed"])
@@ -805,6 +953,8 @@ def main() -> None:
                 force_ref_key_count=args.force_ref_key_count,
                 multi_k_hypotheses=args.multi_k,
                 length_prior_weight=args.length_prior_weight,
+                keyness_model=keyness_model,
+                keyness_threshold=args.keyness_threshold,
             )
             if dec["fixed"] is not None:
                 r = dict(dec["fixed"])
@@ -840,6 +990,8 @@ def main() -> None:
         "force_ref_key_count": bool(args.force_ref_key_count),
         "multi_k_hypotheses": args.multi_k,
         "length_prior_weight": args.length_prior_weight if args.multi_k else None,
+        "keyness_model": args.keyness_model,
+        "keyness_threshold": args.keyness_threshold if args.keyness_model else None,
         "gt_keyframes_fixed": _aggregate_rows(gt_keyframes_fixed_rows),
         "gt_keyframes_overlap": _aggregate_rows(gt_keyframes_overlap_rows),
         "gt_segment_fixed": _aggregate_rows(gt_fixed_rows),
