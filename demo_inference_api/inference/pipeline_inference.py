@@ -12,7 +12,7 @@ from scipy.signal import resample
 
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parent.parent
-for p in (REPO_ROOT, REPO_ROOT / 'onset_detection', REPO_ROOT / 'phase3_password_inception'):
+for p in (REPO_ROOT, REPO_ROOT / 'onset_detection', REPO_ROOT / 'onset_detection' / 'stage2_ctc', REPO_ROOT / 'phase3_password_inception'):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 

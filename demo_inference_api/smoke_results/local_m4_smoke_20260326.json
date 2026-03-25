@@ -1,0 +1,23 @@
+{
+  "sensor_csv": "/Users/shiyi/备份（mac_vs专用）/data/raw/password/len9/p01_free_type_password_part1_20260321_195652_sensor.csv",
+  "rows": 34994,
+  "orig_hz_est": 199.9983600134479,
+  "resampled_rows": 33245,
+  "num_stage1_segments": 11,
+  "best_segment": {
+    "start": 18244,
+    "end": 19866,
+    "confidence": 0.9519182172053839
+  },
+  "pipeline_char_top1": "3vllj8",
+  "pipeline_num_keys": 6,
+  "pipeline_top_candidate": {
+    "password": "3vllj8",
+    "score": -0.7002750366837159
+  },
+  "ctc_prediction": "3vlljz",
+  "ctc_top_beam_candidate": {
+    "password": "3vlljz",
+    "score": -1.5736288349317011
+  }
+}

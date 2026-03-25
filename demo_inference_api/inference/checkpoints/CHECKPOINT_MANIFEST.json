@@ -10,7 +10,7 @@
     "model_config": {
       "feature_mode": "raw6_energy_activity_pulse",
       "sample_rate_hz": 190.0,
-      "base_filters": 24,
+      "base_filters": 12,
       "depth": 4,
       "kernel_size": 7,
       "dropout": 0.1,

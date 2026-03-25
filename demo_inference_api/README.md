@@ -34,3 +34,9 @@ It is intentionally scoped for demo integration:
 - Stage1: dense labeling + fixed posthoc parameters from current best dev3 bundle
 - Pipeline stage2+3: keyness RF + mixed-adapt hard-neg Stage3 + new overlap + beam500
 - CTC: best current CTC-dominant checkpoint + greedy / beam20 decode
+
+
+## Verification helpers
+
+- `smoke_test_api.py`: runs a real import + model-load + one-sample inference smoke test
+- `docs/VERIFIED_STATUS_20260326.md`: records what was actually verified on server and local Mac M4
