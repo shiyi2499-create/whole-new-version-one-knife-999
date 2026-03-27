@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import torch
 
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parent
@@ -20,7 +21,12 @@ if str(REPO_ROOT / 'onset_detection') not in sys.path:
 
 from inference.pipeline_inference import load_all_models
 from inference.preprocess import csv_to_array, estimate_sample_rate, extract_timestamps, resample_to_190hz
-from onset_detection.stage2_segmental.scripts.eval_stage123_end_to_end_strongstage2 import _run_stage3_fixed, _run_stage3_overlap
+from onset_detection.stage2_segmental.scripts.eval_stage123_end_to_end_strongstage2 import (
+    _run_stage3_fixed,
+    _run_stage3_overlap,
+    load_external_inception,
+)
+from phase3_password_inception.run_password_closure_inception import load_final_inception
 
 
 def levenshtein(a: str, b: str) -> int:
@@ -112,10 +118,20 @@ def _result_block(res: dict[str, Any] | None, truth: str) -> dict[str, Any] | No
     }
 
 
+def _load_stage3_window_params(checkpoint_path: Path) -> tuple[float, float, int]:
+    ckpt = torch.load(str(checkpoint_path), map_location='cpu', weights_only=False)
+    pre_ms = float(ckpt.get('pre_ms', 100.0))
+    post_ms = float(ckpt.get('post_ms', 200.0))
+    target_len = int(ckpt['n_timesteps'])
+    return pre_ms, post_ms, target_len
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description='GT segment + GT key Stage3 eval on still-password-still probe set')
     ap.add_argument('--dataset-root', default='data/raw/clean_password_probe')
     ap.add_argument('--checkpoint-dir', default='')
+    ap.add_argument('--stage3-checkpoint', default='')
+    ap.add_argument('--stage3-scaler', default='')
     ap.add_argument('--output-dir', default='results/still_password_probe_gt_stage3_eval')
     ap.add_argument('--beam-width', type=int, default=500)
     ap.add_argument('--pre-margin-sec', type=float, default=0.20)
@@ -132,6 +148,23 @@ def main() -> int:
         raise SystemExit(f'No protocol files found in {dataset_root}')
 
     models = load_all_models(checkpoint_dir)
+    if args.stage3_checkpoint:
+        stage3_checkpoint = (REPO_ROOT / args.stage3_checkpoint).resolve() if not Path(args.stage3_checkpoint).is_absolute() else Path(args.stage3_checkpoint)
+        if not args.stage3_scaler:
+            raise SystemExit('--stage3-scaler is required when --stage3-checkpoint is provided')
+        stage3_scaler = (REPO_ROOT / args.stage3_scaler).resolve() if not Path(args.stage3_scaler).is_absolute() else Path(args.stage3_scaler)
+        stage3_model, stage3_classes, stage3_means, stage3_stds = load_final_inception(str(stage3_checkpoint), str(stage3_scaler), models['device'])
+        runtime_stage3_classifier = load_external_inception(str(stage3_checkpoint), str(stage3_scaler), models['device'])
+        runtime_stage3_classifier.eval()
+        pre_ms, post_ms, target_len = _load_stage3_window_params(stage3_checkpoint)
+        models['stage3_model'] = stage3_model
+        models['stage3_classes'] = stage3_classes
+        models['stage3_means'] = stage3_means
+        models['stage3_stds'] = stage3_stds
+        models['runtime_stage3_classifier'] = runtime_stage3_classifier
+        models['stage3_target_len'] = target_len
+        models['stage3_pre_ms'] = pre_ms
+        models['stage3_post_ms'] = post_ms
     sr = float(models['stage1_config'].get('sample_rate_hz', 190.0))
     rows = []
 
@@ -169,6 +202,8 @@ def main() -> int:
             beam_width=args.beam_width,
             branch_topk=5,
             sequence_hit_cutoff=max(100, args.beam_width),
+            pre_ms=float(models.get('stage3_pre_ms', 100.0)),
+            post_ms=float(models.get('stage3_post_ms', 200.0)),
         )
         overlap = _run_stage3_overlap(
             models['overlap_model'],
@@ -215,6 +250,10 @@ def main() -> int:
 
     summary = {
         'n_samples': len(rows),
+        'stage3_window_ms': {
+            'pre_ms': float(models.get('stage3_pre_ms', 100.0)),
+            'post_ms': float(models.get('stage3_post_ms', 200.0)),
+        },
         'fixed_mean_cer': mean_metric(('stage3_fixed', 'cer')),
         'overlap_mean_cer': mean_metric(('stage3_overlap', 'cer')),
         'fixed_exact': int(sum((r['stage3_fixed'] or {}).get('prediction', '') == r['truth'] for r in rows)),

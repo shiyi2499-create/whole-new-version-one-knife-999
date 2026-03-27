@@ -298,6 +298,8 @@ def train_final_inception(
     lr: float = 8e-4,
     patience: int = 60,
     augment: bool = True,
+    pre_ms: float = 100.0,
+    post_ms: float = 200.0,
 ):
     if (not force) and os.path.exists(checkpoint_path) and os.path.exists(scaler_path):
         print(f"  Found saved model: {checkpoint_path}")
@@ -398,6 +400,9 @@ def train_final_inception(
         "n_classes": n_classes,
         "classes": classes,
         "model_name": "InceptionTime",
+        "pre_ms": float(pre_ms),
+        "post_ms": float(post_ms),
+        "target_rate_hz": 190.0,
     }, checkpoint_path)
     np.savez(scaler_path, means=ch_means, stds=ch_stds)
     print(f"  Best val acc: {best_val:.3f} | Total time: {time.time()-t0:.1f}s")
@@ -446,8 +451,12 @@ def build_no_space_sequences(
     session_prefix: str,
     yes_only: bool = True,
     eval_max_sequences: int = 0,
+    window_cfg: Optional[WindowConfig] = None,
 ) -> list[dict]:
-    extractor = SessionWindowExtractor(session_prefix, window_cfg=WindowConfig(min_window_samples=2))
+    extractor = SessionWindowExtractor(
+        session_prefix,
+        window_cfg=window_cfg or WindowConfig(min_window_samples=2),
+    )
     attempts = read_attempt_rows(session_prefix)
     events_path = session_prefix + "_events.csv"
     sequences = []
@@ -701,6 +710,10 @@ def parse_args():
     parser.add_argument("--eval-max-sequences", type=int, default=0,
                         help="Optional small cap for smoke tests.")
     parser.add_argument("--yes-only", action="store_true", default=True)
+    parser.add_argument("--pre-ms", type=float, default=100.0,
+                        help="Pre-trigger window in milliseconds for Stage3 extraction.")
+    parser.add_argument("--post-ms", type=float, default=200.0,
+                        help="Post-trigger window in milliseconds for Stage3 extraction.")
     parser.add_argument("--seq-branch-topk", type=int, default=5,
                         help="Per-position top-k used when expanding sequence candidates.")
     parser.add_argument("--seq-beam-width", type=int, default=100,
@@ -728,14 +741,22 @@ def main():
             lr=args.lr,
             patience=args.patience,
             augment=(not args.no_augment),
+            pre_ms=args.pre_ms,
+            post_ms=args.post_ms,
         )
     else:
         if not (os.path.exists(args.checkpoint_path) and os.path.exists(args.scaler_path)):
             raise FileNotFoundError("Checkpoint/scaler missing but --no-train was given.")
 
     model, classes, means, stds = load_final_inception(args.checkpoint_path, args.scaler_path, device)
-    n_timesteps = int(torch.load(args.checkpoint_path, map_location="cpu", weights_only=False)["n_timesteps"])
-    print(f"Loaded Inception model: n_classes={len(classes)}, n_timesteps={n_timesteps}")
+    ckpt_meta = torch.load(args.checkpoint_path, map_location="cpu", weights_only=False)
+    n_timesteps = int(ckpt_meta["n_timesteps"])
+    ckpt_pre_ms = float(ckpt_meta.get("pre_ms", args.pre_ms))
+    ckpt_post_ms = float(ckpt_meta.get("post_ms", args.post_ms))
+    print(
+        f"Loaded Inception model: n_classes={len(classes)}, n_timesteps={n_timesteps}, "
+        f"window=({ckpt_pre_ms:.1f}ms,{ckpt_post_ms:.1f}ms)"
+    )
     print(f"Classifier classes: {' '.join(classes.tolist())}")
 
     sessions = discover_freetype_sessions(args.free_type_dirs)
@@ -744,8 +765,18 @@ def main():
     print(f"Found {len(sessions)} password/free_type sessions")
 
     sequences = []
+    eval_window_cfg = WindowConfig(
+        pre_trigger_ms=int(round(ckpt_pre_ms)),
+        post_trigger_ms=int(round(ckpt_post_ms)),
+        min_window_samples=2,
+    )
     for sess in sessions:
-        seqs = build_no_space_sequences(sess, yes_only=args.yes_only, eval_max_sequences=args.eval_max_sequences)
+        seqs = build_no_space_sequences(
+            sess,
+            yes_only=args.yes_only,
+            eval_max_sequences=args.eval_max_sequences,
+            window_cfg=eval_window_cfg,
+        )
         print(f"  {os.path.basename(sess)} -> {len(seqs)} no-space sequences")
         sequences.extend(seqs)
         if args.eval_max_sequences and len(sequences) >= args.eval_max_sequences:
@@ -791,6 +822,7 @@ def main():
             "merged_path": args.merged_path,
             "free_type_dirs": args.free_type_dirs,
             "checkpoint_path": args.checkpoint_path,
+            "stage3_window_ms": {"pre_ms": ckpt_pre_ms, "post_ms": ckpt_post_ms},
             "metrics": metrics,
             "examples": reports[:20],
         }, f, indent=2, ensure_ascii=False)

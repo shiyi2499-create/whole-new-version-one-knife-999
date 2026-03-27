@@ -38,6 +38,9 @@ from onset_detection.stage2_segmental.data import (  # noqa: E402
     extract_fixed_window,
 )
 from phase3_password_inception.run_password_closure_inception import (  # noqa: E402
+    WindowConfig,
+    build_no_space_sequences,
+    discover_freetype_sessions,
     evaluate_sequences,
     load_final_inception,
     resolve_torch_device,
@@ -96,6 +99,39 @@ def _load_mixed_sequences(
         "holdout_sequences": len(holdout_seqs),
     }
     return train_seqs, holdout_seqs, info
+
+
+def _load_password_sequences_with_window(
+    password_dir: str,
+    pre_ms: float,
+    post_ms: float,
+) -> tuple[list[dict], dict]:
+    sessions = discover_freetype_sessions([password_dir])
+    if not sessions:
+        raise RuntimeError(f"No password sessions found in {password_dir}")
+    window_cfg = WindowConfig(
+        pre_trigger_ms=int(round(pre_ms)),
+        post_trigger_ms=int(round(post_ms)),
+        min_window_samples=2,
+    )
+    seqs: list[dict] = []
+    for sess in sessions:
+        seqs.extend(
+            build_no_space_sequences(
+                sess,
+                yes_only=True,
+                eval_max_sequences=0,
+                window_cfg=window_cfg,
+            )
+        )
+    info = {
+        "password_dir": password_dir,
+        "sessions": len(sessions),
+        "sequences": len(seqs),
+        "pre_ms": float(pre_ms),
+        "post_ms": float(post_ms),
+    }
+    return seqs, info
 
 
 def _metrics_subset(metrics: dict) -> dict:
@@ -186,18 +222,15 @@ def main():
 
     model, classes, means, stds = load_final_inception(args.base_checkpoint, args.base_scaler, device)
     model.eval()
-    target_len = int(torch.load(args.base_checkpoint, map_location="cpu", weights_only=False)["n_timesteps"])
+    target_len = int((args.pre_ms + args.post_ms) / 1000.0 * 190.0)
     class_to_idx = {str(c): i for i, c in enumerate(classes.tolist())}
 
     standalone_train = []
     standalone_info = []
     for password_dir in args.password_dir:
-        _, seqs = load_sequences(password_dir)
+        seqs, info = _load_password_sequences_with_window(password_dir, args.pre_ms, args.post_ms)
         standalone_train.extend(seqs)
-        standalone_info.append({
-            "password_dir": password_dir,
-            "sequences": len(seqs),
-        })
+        standalone_info.append(info)
 
     mixed_train = []
     mixed_holdout = []
@@ -298,6 +331,10 @@ def main():
     output_ckpt.parent.mkdir(parents=True, exist_ok=True)
     ckpt = torch.load(args.base_checkpoint, map_location="cpu", weights_only=False)
     ckpt["model_state"] = copy.deepcopy(model.state_dict())
+    ckpt["pre_ms"] = float(args.pre_ms)
+    ckpt["post_ms"] = float(args.post_ms)
+    ckpt["n_timesteps"] = int(target_len)
+    ckpt["target_rate_hz"] = 190.0
     torch.save(ckpt, output_ckpt)
 
     output_scaler = Path(args.output_scaler)
@@ -311,6 +348,8 @@ def main():
         "output_scaler": str(output_scaler.resolve()),
         "device": str(device),
         "target_len": int(target_len),
+        "pre_ms": float(args.pre_ms),
+        "post_ms": float(args.post_ms),
         "holdout_sessions": sorted(holdout_sessions),
         "standalone_info": standalone_info,
         "mixed_info": mixed_info,

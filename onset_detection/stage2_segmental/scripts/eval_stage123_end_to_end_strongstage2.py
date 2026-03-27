@@ -156,10 +156,19 @@ def _run_stage3_fixed(
     beam_width: int = 100,
     branch_topk: int = 5,
     sequence_hit_cutoff: int = 100,
+    pre_ms: float = 100.0,
+    post_ms: float = 200.0,
 ) -> dict | None:
     windows = []
     for frame in local_frames.tolist():
-        win = _extract_window_from_signal(crop_imu, int(frame), sample_rate_hz, target_len)
+        win = _extract_window_from_signal(
+            crop_imu,
+            int(frame),
+            sample_rate_hz,
+            target_len,
+            pre_ms=pre_ms,
+            post_ms=post_ms,
+        )
         if win is None:
             return None
         windows.append(win)
@@ -218,6 +227,13 @@ def _run_stage3_overlap(
     dec["overlap_starts"] = [float(x) for x in out["starts"].detach().cpu().tolist()]
     dec["overlap_ends"] = [float(x) for x in out["ends"].detach().cpu().tolist()]
     return dec
+
+
+def _load_stage3_window_params(checkpoint_path: str) -> tuple[float, float]:
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    pre_ms = float(ckpt.get("pre_ms", 100.0))
+    post_ms = float(ckpt.get("post_ms", 200.0))
+    return pre_ms, post_ms
 
 
 def _infer_expected_keys_from_region(
@@ -347,6 +363,8 @@ def _decode_candidate_segment_strong(
     beam_width: int = 100,
     branch_topk: int = 5,
     sequence_hit_cutoff: int = 100,
+    stage3_pre_ms: float = 100.0,
+    stage3_post_ms: float = 200.0,
 ) -> dict:
     if keyness_model is not None:
         force_k = int(len(ref)) if (force_ref_key_count and ref is not None) else None
@@ -386,6 +404,8 @@ def _decode_candidate_segment_strong(
                 beam_width=beam_width,
                 branch_topk=branch_topk,
                 sequence_hit_cutoff=sequence_hit_cutoff,
+                pre_ms=stage3_pre_ms,
+                post_ms=stage3_post_ms,
             )
             overlap = _run_stage3_overlap(
                 overlap_model,
@@ -492,6 +512,8 @@ def _decode_candidate_segment_strong(
                 beam_width=beam_width,
                 branch_topk=branch_topk,
                 sequence_hit_cutoff=sequence_hit_cutoff,
+                pre_ms=stage3_pre_ms,
+                post_ms=stage3_post_ms,
             )
             overlap_k = _run_stage3_overlap(
                 overlap_model,
@@ -652,6 +674,8 @@ def _decode_candidate_segment_strong(
             beam_width=beam_width,
             branch_topk=branch_topk,
             sequence_hit_cutoff=sequence_hit_cutoff,
+            pre_ms=stage3_pre_ms,
+            post_ms=stage3_post_ms,
         )
         overlap = _run_stage3_overlap(
             overlap_model,
@@ -800,6 +824,7 @@ def main() -> None:
         device,
     )
     stage3_target_len = int(torch.load(args.stage3_checkpoint, map_location="cpu", weights_only=False)["n_timesteps"])
+    stage3_pre_ms, stage3_post_ms = _load_stage3_window_params(args.stage3_checkpoint)
     stage3_model.eval()
     overlap_model = load_overlap_checkpoint(args.overlap_checkpoint, device)
     overlap_model.eval()
@@ -860,6 +885,8 @@ def main() -> None:
                 beam_width=args.beam_width,
                 branch_topk=args.branch_topk,
                 sequence_hit_cutoff=args.sequence_hit_cutoff,
+                pre_ms=stage3_pre_ms,
+                post_ms=stage3_post_ms,
             )
             gt_overlap = _run_stage3_overlap(
                 overlap_model,
@@ -913,6 +940,8 @@ def main() -> None:
                 args.beam_width,
                 args.branch_topk,
                 args.sequence_hit_cutoff,
+                stage3_pre_ms,
+                stage3_post_ms,
             )
             if dec["fixed"] is not None:
                 r = dict(dec["fixed"])
@@ -968,6 +997,8 @@ def main() -> None:
                 args.beam_width,
                 args.branch_topk,
                 args.sequence_hit_cutoff,
+                stage3_pre_ms,
+                stage3_post_ms,
             )
             if dec["fixed"] is not None:
                 r = dict(dec["fixed"])
@@ -1024,6 +1055,8 @@ def main() -> None:
                 beam_width=args.beam_width,
                 branch_topk=args.branch_topk,
                 sequence_hit_cutoff=args.sequence_hit_cutoff,
+                stage3_pre_ms=stage3_pre_ms,
+                stage3_post_ms=stage3_post_ms,
             )
             if dec["fixed"] is not None:
                 r = dict(dec["fixed"])
@@ -1059,6 +1092,7 @@ def main() -> None:
 
     report = {
         "device": str(device),
+        "stage3_window_ms": {"pre_ms": float(stage3_pre_ms), "post_ms": float(stage3_post_ms)},
         "length_model": args.length_model,
         "min_keys": args.min_keys,
         "max_keys": args.max_keys,

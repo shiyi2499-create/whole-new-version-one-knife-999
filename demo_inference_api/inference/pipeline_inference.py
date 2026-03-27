@@ -180,7 +180,10 @@ def load_all_models(checkpoint_dir: str) -> dict:
     stage3_model, stage3_classes, stage3_means, stage3_stds = load_final_inception(stage3_ckpt, stage3_scaler, device)
     runtime_stage3_classifier = load_external_inception(stage3_ckpt, stage3_scaler, device)
     runtime_stage3_classifier.eval()
-    stage3_target_len = int(torch.load(stage3_ckpt, map_location='cpu', weights_only=False)['n_timesteps'])
+    stage3_meta = torch.load(stage3_ckpt, map_location='cpu', weights_only=False)
+    stage3_target_len = int(stage3_meta['n_timesteps'])
+    stage3_pre_ms = float(stage3_meta.get('pre_ms', 100.0))
+    stage3_post_ms = float(stage3_meta.get('post_ms', 200.0))
 
     ctc_model = _load_ctc_model(_resolve_ckpt_path(checkpoint_dir, manifest['ctc']), device)
 
@@ -197,6 +200,8 @@ def load_all_models(checkpoint_dir: str) -> dict:
         'stage3_means': stage3_means,
         'stage3_stds': stage3_stds,
         'stage3_target_len': stage3_target_len,
+        'stage3_pre_ms': stage3_pre_ms,
+        'stage3_post_ms': stage3_post_ms,
         'runtime_stage3_classifier': runtime_stage3_classifier,
         'ctc_model': ctc_model,
         'pipeline_defaults': manifest.get('pipeline_defaults', {}),
@@ -293,6 +298,8 @@ def run_pipeline_stage23(imu_segment: np.ndarray, models: dict, beam_width: int 
             beam_width=beam_width,
             branch_topk=branch_topk,
             sequence_hit_cutoff=sequence_hit_cutoff,
+            pre_ms=float(models.get('stage3_pre_ms', 100.0)),
+            post_ms=float(models.get('stage3_post_ms', 200.0)),
         )
         overlap = _run_stage3_overlap(
             models['overlap_model'],
