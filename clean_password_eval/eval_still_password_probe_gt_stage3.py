@@ -118,12 +118,13 @@ def _result_block(res: dict[str, Any] | None, truth: str) -> dict[str, Any] | No
     }
 
 
-def _load_stage3_window_params(checkpoint_path: Path) -> tuple[float, float, int]:
+def _load_stage3_runtime_params(checkpoint_path: Path) -> tuple[float, float, int, str]:
     ckpt = torch.load(str(checkpoint_path), map_location='cpu', weights_only=False)
     pre_ms = float(ckpt.get('pre_ms', 100.0))
     post_ms = float(ckpt.get('post_ms', 200.0))
     target_len = int(ckpt['n_timesteps'])
-    return pre_ms, post_ms, target_len
+    norm_mode = str(ckpt.get('norm_mode', 'global'))
+    return pre_ms, post_ms, target_len, norm_mode
 
 
 def main() -> int:
@@ -156,7 +157,7 @@ def main() -> int:
         stage3_model, stage3_classes, stage3_means, stage3_stds = load_final_inception(str(stage3_checkpoint), str(stage3_scaler), models['device'])
         runtime_stage3_classifier = load_external_inception(str(stage3_checkpoint), str(stage3_scaler), models['device'])
         runtime_stage3_classifier.eval()
-        pre_ms, post_ms, target_len = _load_stage3_window_params(stage3_checkpoint)
+        pre_ms, post_ms, target_len, norm_mode = _load_stage3_runtime_params(stage3_checkpoint)
         models['stage3_model'] = stage3_model
         models['stage3_classes'] = stage3_classes
         models['stage3_means'] = stage3_means
@@ -165,6 +166,7 @@ def main() -> int:
         models['stage3_target_len'] = target_len
         models['stage3_pre_ms'] = pre_ms
         models['stage3_post_ms'] = post_ms
+        models['stage3_norm_mode'] = norm_mode
     sr = float(models['stage1_config'].get('sample_rate_hz', 190.0))
     rows = []
 
@@ -204,6 +206,7 @@ def main() -> int:
             sequence_hit_cutoff=max(100, args.beam_width),
             pre_ms=float(models.get('stage3_pre_ms', 100.0)),
             post_ms=float(models.get('stage3_post_ms', 200.0)),
+            norm_mode=str(models.get('stage3_norm_mode', 'global')),
         )
         overlap = _run_stage3_overlap(
             models['overlap_model'],
@@ -219,6 +222,7 @@ def main() -> int:
             beam_width=args.beam_width,
             branch_topk=5,
             sequence_hit_cutoff=max(100, args.beam_width),
+            norm_mode=str(models.get('stage3_norm_mode', 'global')),
         )
 
         row = {
@@ -254,6 +258,7 @@ def main() -> int:
             'pre_ms': float(models.get('stage3_pre_ms', 100.0)),
             'post_ms': float(models.get('stage3_post_ms', 200.0)),
         },
+        'stage3_norm_mode': str(models.get('stage3_norm_mode', 'global')),
         'fixed_mean_cer': mean_metric(('stage3_fixed', 'cer')),
         'overlap_mean_cer': mean_metric(('stage3_overlap', 'cer')),
         'fixed_exact': int(sum((r['stage3_fixed'] or {}).get('prediction', '') == r['truth'] for r in rows)),

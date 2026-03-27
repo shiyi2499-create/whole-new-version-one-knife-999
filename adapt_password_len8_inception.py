@@ -136,10 +136,20 @@ def flatten_items(sequences: list[dict], class_to_idx: dict[str, int]):
     return np.stack(X), np.asarray(y, dtype=np.int64)
 
 
-def normalize_windows(X: np.ndarray, means: np.ndarray, stds: np.ndarray) -> np.ndarray:
+def normalize_windows(
+    X: np.ndarray,
+    means: np.ndarray,
+    stds: np.ndarray,
+    norm_mode: str = "global",
+) -> np.ndarray:
     Xn = X.copy()
-    for ch in range(Xn.shape[2]):
-        Xn[:, :, ch] = (Xn[:, :, ch] - means[ch]) / (stds[ch] + 1e-10)
+    if norm_mode == "per_window":
+        per_mean = Xn.mean(axis=1, keepdims=True)
+        per_std = Xn.std(axis=1, keepdims=True)
+        Xn = (Xn - per_mean) / (per_std + 1e-6)
+    else:
+        for ch in range(Xn.shape[2]):
+            Xn[:, :, ch] = (Xn[:, :, ch] - means[ch]) / (stds[ch] + 1e-10)
     return Xn
 
 

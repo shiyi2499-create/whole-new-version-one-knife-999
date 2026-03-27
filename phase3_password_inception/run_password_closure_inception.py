@@ -312,9 +312,9 @@ def train_final_inception(
 
     ch_means = X.mean(axis=(0, 1))
     ch_stds = X.std(axis=(0, 1))
-    X_norm = X.copy()
-    for ch in range(n_channels):
-        X_norm[:, :, ch] = (X_norm[:, :, ch] - ch_means[ch]) / (ch_stds[ch] + 1e-10)
+    per_mean = X.mean(axis=1, keepdims=True)
+    per_std = X.std(axis=1, keepdims=True)
+    X_norm = (X - per_mean) / (per_std + 1e-6)
 
     indices = np.arange(len(X_norm))
     test_size = max(0.1, 1 / len(indices))
@@ -400,6 +400,7 @@ def train_final_inception(
         "n_classes": n_classes,
         "classes": classes,
         "model_name": "InceptionTime",
+        "norm_mode": "per_window",
         "pre_ms": float(pre_ms),
         "post_ms": float(post_ms),
         "target_rate_hz": 190.0,
@@ -421,6 +422,11 @@ def load_final_inception(checkpoint_path: str, scaler_path: str, device: torch.d
     model.eval()
     scaler = np.load(scaler_path)
     return model, np.array(ckpt["classes"]).astype(str), scaler["means"], scaler["stds"]
+
+
+def load_inception_norm_mode(checkpoint_path: str) -> str:
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    return str(ckpt.get("norm_mode", "global"))
 
 
 def discover_freetype_sessions(freetype_dirs: list[str]) -> list[str]:
@@ -510,10 +516,22 @@ def build_no_space_sequences(
     return out
 
 
-def infer_one(model, window: np.ndarray, means: np.ndarray, stds: np.ndarray, device: torch.device) -> np.ndarray:
+def infer_one(
+    model,
+    window: np.ndarray,
+    means: np.ndarray,
+    stds: np.ndarray,
+    device: torch.device,
+    norm_mode: str = "global",
+) -> np.ndarray:
     w = window.copy().astype(np.float32)
-    for ch in range(w.shape[1]):
-        w[:, ch] = (w[:, ch] - means[ch]) / (stds[ch] + 1e-10)
+    if norm_mode == "per_window":
+        per_mean = w.mean(axis=0, keepdims=True)
+        per_std = w.std(axis=0, keepdims=True)
+        w = (w - per_mean) / (per_std + 1e-6)
+    else:
+        for ch in range(w.shape[1]):
+            w[:, ch] = (w[:, ch] - means[ch]) / (stds[ch] + 1e-10)
     with torch.no_grad():
         xb = torch.tensor(w, dtype=torch.float32).unsqueeze(0).to(device)
         logits = model(xb)
@@ -581,6 +599,7 @@ def evaluate_sequences(
     means,
     stds,
     device: torch.device,
+    norm_mode: str = "global",
     char_topk: tuple[int, ...] = (1, 3, 5),
     seq_branch_topk: int = 5,
     seq_beam_width: int = 100,
@@ -605,7 +624,7 @@ def evaluate_sequences(
         prob_vectors = []
         topk_per_pos = []
         for item in seq["items"]:
-            probs = infer_one(model, item["window"], means, stds, device)
+            probs = infer_one(model, item["window"], means, stds, device, norm_mode=norm_mode)
             prob_vectors.append(probs)
             ranked_idx = np.argsort(probs)[::-1]
             topk_per_pos.append([str(classes[int(i)]) for i in ranked_idx[: max(char_topk)]])
@@ -753,9 +772,10 @@ def main():
     n_timesteps = int(ckpt_meta["n_timesteps"])
     ckpt_pre_ms = float(ckpt_meta.get("pre_ms", args.pre_ms))
     ckpt_post_ms = float(ckpt_meta.get("post_ms", args.post_ms))
+    ckpt_norm_mode = str(ckpt_meta.get("norm_mode", "global"))
     print(
         f"Loaded Inception model: n_classes={len(classes)}, n_timesteps={n_timesteps}, "
-        f"window=({ckpt_pre_ms:.1f}ms,{ckpt_post_ms:.1f}ms)"
+        f"window=({ckpt_pre_ms:.1f}ms,{ckpt_post_ms:.1f}ms), norm={ckpt_norm_mode}"
     )
     print(f"Classifier classes: {' '.join(classes.tolist())}")
 
@@ -793,6 +813,7 @@ def main():
         means,
         stds,
         device,
+        norm_mode=ckpt_norm_mode,
         char_topk=(1, 3, 5),
         seq_branch_topk=args.seq_branch_topk,
         seq_beam_width=args.seq_beam_width,
@@ -823,6 +844,7 @@ def main():
             "free_type_dirs": args.free_type_dirs,
             "checkpoint_path": args.checkpoint_path,
             "stage3_window_ms": {"pre_ms": ckpt_pre_ms, "post_ms": ckpt_post_ms},
+            "norm_mode": ckpt_norm_mode,
             "metrics": metrics,
             "examples": reports[:20],
         }, f, indent=2, ensure_ascii=False)

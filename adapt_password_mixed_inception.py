@@ -43,6 +43,7 @@ from phase3_password_inception.run_password_closure_inception import (  # noqa: 
     discover_freetype_sessions,
     evaluate_sequences,
     load_final_inception,
+    load_inception_norm_mode,
     resolve_torch_device,
     set_global_seed,
 )
@@ -222,6 +223,7 @@ def main():
 
     model, classes, means, stds = load_final_inception(args.base_checkpoint, args.base_scaler, device)
     model.eval()
+    norm_mode = load_inception_norm_mode(args.base_checkpoint)
     target_len = int((args.pre_ms + args.post_ms) / 1000.0 * 190.0)
     class_to_idx = {str(c): i for i, c in enumerate(classes.tolist())}
 
@@ -260,6 +262,7 @@ def main():
         means,
         stds,
         device,
+        norm_mode=norm_mode,
     )
 
     standalone_chars_before = {}
@@ -273,7 +276,7 @@ def main():
     if standalone_train:
         X_standalone, y_standalone = flatten_items(standalone_train, class_to_idx)
         standalone_chars_before = {str(classes[int(k)]): int(v) for k, v in Counter(y_standalone.tolist()).items()}
-        X_standalone = normalize_windows(X_standalone, means, stds)
+        X_standalone = normalize_windows(X_standalone, means, stds, norm_mode=norm_mode)
         standalone_chars_after = dict(standalone_chars_before)
         X_parts.append(X_standalone)
         y_parts.append(y_standalone)
@@ -290,7 +293,7 @@ def main():
     if mixed_train:
         X_mixed, y_mixed = flatten_items(mixed_train, class_to_idx)
         mixed_chars_before = {str(classes[int(k)]): int(v) for k, v in Counter(y_mixed.tolist()).items()}
-        X_mixed = normalize_windows(X_mixed, means, stds)
+        X_mixed = normalize_windows(X_mixed, means, stds, norm_mode=norm_mode)
         X_mixed, y_mixed, over_info = _oversample_target_windows(
             X_mixed,
             y_mixed,
@@ -325,12 +328,14 @@ def main():
         means,
         stds,
         device,
+        norm_mode=norm_mode,
     )
 
     output_ckpt = Path(args.output_checkpoint)
     output_ckpt.parent.mkdir(parents=True, exist_ok=True)
     ckpt = torch.load(args.base_checkpoint, map_location="cpu", weights_only=False)
     ckpt["model_state"] = copy.deepcopy(model.state_dict())
+    ckpt["norm_mode"] = norm_mode
     ckpt["pre_ms"] = float(args.pre_ms)
     ckpt["post_ms"] = float(args.post_ms)
     ckpt["n_timesteps"] = int(target_len)
@@ -348,6 +353,7 @@ def main():
         "output_scaler": str(output_scaler.resolve()),
         "device": str(device),
         "target_len": int(target_len),
+        "norm_mode": norm_mode,
         "pre_ms": float(args.pre_ms),
         "post_ms": float(args.post_ms),
         "holdout_sessions": sorted(holdout_sessions),
