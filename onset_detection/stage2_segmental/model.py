@@ -25,6 +25,7 @@ from phase3_password_inception.run_password_closure_inception import (
     InceptionTimeClassifier,
     augment_batch,
 )
+from phase3_password_inception.stage3_diff_channels import append_diff_channels
 
 
 @dataclass
@@ -87,20 +88,31 @@ class EpisodeEncoder(nn.Module):
 
 
 class SegmentalClassifier(nn.Module):
-    def __init__(self, target_len: int, classes: list[str], means: np.ndarray, stds: np.ndarray):
+    def __init__(
+        self,
+        target_len: int,
+        classes: list[str],
+        means: np.ndarray,
+        stds: np.ndarray,
+        use_diff_channels: bool = False,
+    ):
         super().__init__()
         self.target_len = int(target_len)
         self.classes = [str(x) for x in classes]
         self.class_to_idx = {c: i for i, c in enumerate(self.classes)}
+        self.use_diff_channels = bool(use_diff_channels)
         self.model = InceptionTimeClassifier(
             n_timesteps=self.target_len,
-            n_channels=6,
+            n_channels=int(len(means)),
             n_classes=len(self.classes),
         )
         self.register_buffer("means", torch.as_tensor(np.asarray(means, dtype=np.float32)))
         self.register_buffer("stds", torch.as_tensor(np.asarray(stds, dtype=np.float32)))
 
     def normalize(self, windows: torch.Tensor) -> torch.Tensor:
+        if self.use_diff_channels and windows.shape[-1] * 2 == self.means.shape[0]:
+            windows_np = append_diff_channels(windows.detach().cpu().numpy())
+            windows = torch.as_tensor(windows_np, dtype=windows.dtype, device=windows.device)
         return (windows - self.means.view(1, 1, -1)) / (self.stds.view(1, 1, -1) + 1e-6)
 
     def forward(self, windows: torch.Tensor) -> torch.Tensor:
@@ -112,6 +124,7 @@ class SegmentalClassifier(nn.Module):
             "classes": self.classes,
             "means": self.means.detach().cpu().numpy().tolist(),
             "stds": self.stds.detach().cpu().numpy().tolist(),
+            "use_diff_channels": self.use_diff_channels,
         }
 
 
@@ -285,11 +298,12 @@ def save_classifier_checkpoint(classifier: SegmentalClassifier, path: str):
         {
             "model_state": classifier.model.state_dict(),
             "n_timesteps": classifier.target_len,
-            "n_channels": 6,
+            "n_channels": int(classifier.means.numel()),
             "n_classes": len(classifier.classes),
             "classes": np.asarray(classifier.classes, dtype="<U1"),
             "means": classifier.means.detach().cpu().numpy(),
             "stds": classifier.stds.detach().cpu().numpy(),
+            "use_diff_channels": bool(classifier.use_diff_channels),
         },
         path,
     )
@@ -302,6 +316,7 @@ def load_classifier_from_checkpoint(path: str, device: torch.device) -> Segmenta
         classes=[str(x) for x in np.asarray(ckpt["classes"]).tolist()],
         means=np.asarray(ckpt["means"], dtype=np.float32),
         stds=np.asarray(ckpt["stds"], dtype=np.float32),
+        use_diff_channels=bool(ckpt.get("use_diff_channels", False)),
     ).to(device)
     classifier.model.load_state_dict(ckpt["model_state"])
     return classifier
@@ -315,6 +330,7 @@ def load_external_inception(checkpoint_path: str, scaler_path: str, device: torc
         classes=[str(x) for x in np.asarray(raw["classes"]).astype(str).tolist()],
         means=np.asarray(scaler["means"], dtype=np.float32),
         stds=np.asarray(scaler["stds"], dtype=np.float32),
+        use_diff_channels=bool(raw.get("use_diff_channels", False)),
     ).to(device)
     classifier.model.load_state_dict(raw["model_state"])
     return classifier

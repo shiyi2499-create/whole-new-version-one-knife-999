@@ -47,6 +47,7 @@ from phase3_password_inception.run_password_closure_inception import (  # noqa: 
     resolve_torch_device,
     set_global_seed,
 )
+from phase3_password_inception.stage3_diff_channels import append_diff_channels  # noqa: E402
 
 
 def _episode_to_sequence(
@@ -55,6 +56,7 @@ def _episode_to_sequence(
     target_len: int,
     pre_ms: float,
     post_ms: float,
+    use_diff_channels: bool,
 ) -> dict | None:
     items = []
     for frame, ch in zip(ep.key_frames.tolist(), ep.chars):
@@ -63,6 +65,8 @@ def _episode_to_sequence(
         win = extract_fixed_window(ep, int(frame), pre_ms=pre_ms, post_ms=post_ms, target_len=target_len)
         if win is None:
             return None
+        if use_diff_channels:
+            win = append_diff_channels(win.astype(np.float32))
         items.append({"key": ch, "timestamp_ns": None, "window": win.astype(np.float32)})
     if not items:
         return None
@@ -81,12 +85,13 @@ def _load_mixed_sequences(
     holdout_sessions: set[str],
     pre_ms: float,
     post_ms: float,
+    use_diff_channels: bool,
 ) -> tuple[list[dict], list[dict], dict]:
     episodes = build_password_episodes(mixed_dir)
     train_seqs: list[dict] = []
     holdout_seqs: list[dict] = []
     for ep in episodes:
-        seq = _episode_to_sequence(ep, class_to_idx, target_len, pre_ms, post_ms)
+        seq = _episode_to_sequence(ep, class_to_idx, target_len, pre_ms, post_ms, use_diff_channels)
         if seq is None:
             continue
         if ep.session_id in holdout_sessions:
@@ -106,6 +111,7 @@ def _load_password_sequences_with_window(
     password_dir: str,
     pre_ms: float,
     post_ms: float,
+    use_diff_channels: bool,
 ) -> tuple[list[dict], dict]:
     sessions = discover_freetype_sessions([password_dir])
     if not sessions:
@@ -123,6 +129,7 @@ def _load_password_sequences_with_window(
                 yes_only=True,
                 eval_max_sequences=0,
                 window_cfg=window_cfg,
+                use_diff_channels=use_diff_channels,
             )
         )
     info = {
@@ -224,13 +231,15 @@ def main():
     model, classes, means, stds = load_final_inception(args.base_checkpoint, args.base_scaler, device)
     model.eval()
     norm_mode = load_inception_norm_mode(args.base_checkpoint)
+    base_meta = torch.load(args.base_checkpoint, map_location="cpu", weights_only=False)
+    use_diff_channels = bool(base_meta.get("use_diff_channels", False))
     target_len = int((args.pre_ms + args.post_ms) / 1000.0 * 190.0)
     class_to_idx = {str(c): i for i, c in enumerate(classes.tolist())}
 
     standalone_train = []
     standalone_info = []
     for password_dir in args.password_dir:
-        seqs, info = _load_password_sequences_with_window(password_dir, args.pre_ms, args.post_ms)
+        seqs, info = _load_password_sequences_with_window(password_dir, args.pre_ms, args.post_ms, use_diff_channels)
         standalone_train.extend(seqs)
         standalone_info.append(info)
 
@@ -245,6 +254,7 @@ def main():
             holdout_sessions,
             args.pre_ms,
             args.post_ms,
+            use_diff_channels,
         )
         mixed_train.extend(train_seqs)
         mixed_holdout.extend(holdout_seqs)
@@ -340,6 +350,7 @@ def main():
     ckpt["post_ms"] = float(args.post_ms)
     ckpt["n_timesteps"] = int(target_len)
     ckpt["target_rate_hz"] = 190.0
+    ckpt["use_diff_channels"] = use_diff_channels
     torch.save(ckpt, output_ckpt)
 
     output_scaler = Path(args.output_scaler)
@@ -354,6 +365,7 @@ def main():
         "device": str(device),
         "target_len": int(target_len),
         "norm_mode": norm_mode,
+        "use_diff_channels": use_diff_channels,
         "pre_ms": float(args.pre_ms),
         "post_ms": float(args.post_ms),
         "holdout_sessions": sorted(holdout_sessions),

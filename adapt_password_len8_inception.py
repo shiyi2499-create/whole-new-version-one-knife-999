@@ -39,6 +39,8 @@ from run_password_closure_inception import (  # noqa: E402
     discover_freetype_sessions,
     evaluate_sequences,
     load_final_inception,
+    load_inception_norm_mode,
+    load_inception_use_diff_channels,
     load_merged_training_data,
     resolve_torch_device,
     set_global_seed,
@@ -300,6 +302,8 @@ def main():
     train_final_inception(**train_kwargs)
 
     model, classes, means, stds = load_final_inception(args.checkpoint_path, args.scaler_path, device)
+    norm_mode = load_inception_norm_mode(args.checkpoint_path)
+    use_diff_channels = load_inception_use_diff_channels(args.checkpoint_path)
     class_to_idx = {c: i for i, c in enumerate(classes.tolist())}
 
     sessions = discover_freetype_sessions([args.password_dir])
@@ -311,7 +315,7 @@ def main():
     sequences = []
     for sess in sessions:
         part = parse_part(sess)
-        seqs = build_no_space_sequences(sess, yes_only=True, eval_max_sequences=0)
+        seqs = build_no_space_sequences(sess, yes_only=True, eval_max_sequences=0, use_diff_channels=use_diff_channels)
         print(f"  part {part}: {len(seqs)} sequences")
         sequences.extend(seqs)
 
@@ -327,6 +331,8 @@ def main():
         means,
         stds,
         device,
+        norm_mode=norm_mode,
+        use_diff_channels=use_diff_channels,
         char_topk=(1, 3, 5),
         seq_branch_topk=5,
         seq_beam_width=100,
@@ -334,7 +340,7 @@ def main():
     )
 
     X_adapt, y_adapt = flatten_items(adapt_sequences, class_to_idx)
-    X_adapt = normalize_windows(X_adapt, means, stds)
+    X_adapt = normalize_windows(X_adapt, means, stds, norm_mode=norm_mode)
     print(f"Adapt windows: {X_adapt.shape}")
     model = fine_tune_on_password(
         model=model,
@@ -355,6 +361,8 @@ def main():
         means,
         stds,
         device,
+        norm_mode=norm_mode,
+        use_diff_channels=use_diff_channels,
         char_topk=(1, 3, 5),
         seq_branch_topk=5,
         seq_beam_width=100,
@@ -369,6 +377,8 @@ def main():
         "n_classes": int(len(classes)),
         "classes": classes,
         "model_name": "InceptionTime",
+        "norm_mode": norm_mode,
+        "use_diff_channels": use_diff_channels,
         "adapted_from_password_len8": True,
         "adapt_parts": sorted(adapt_parts),
         "test_parts": sorted(test_parts),

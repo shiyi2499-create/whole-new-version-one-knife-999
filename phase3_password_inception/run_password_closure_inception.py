@@ -48,6 +48,11 @@ try:
 except ImportError as e:
     raise ImportError("torch is required: pip install torch") from e
 
+try:
+    from phase3_password_inception.stage3_diff_channels import append_diff_channels
+except ImportError:
+    from stage3_diff_channels import append_diff_channels
+
 
 SUPPORTED_RE = re.compile(r"^[a-z0-9]$")
 
@@ -127,9 +132,15 @@ class WindowConfig:
 
 
 class SessionWindowExtractor:
-    def __init__(self, session_prefix: str, window_cfg: Optional[WindowConfig] = None):
+    def __init__(
+        self,
+        session_prefix: str,
+        window_cfg: Optional[WindowConfig] = None,
+        use_diff_channels: bool = False,
+    ):
         self.session_prefix = session_prefix
         self.wcfg = window_cfg or WindowConfig()
+        self.use_diff_channels = bool(use_diff_channels)
         self.sensor_path = session_prefix + "_sensor.csv"
         self.events_path = session_prefix + "_events.csv"
         self.sensor_data: Optional[np.ndarray] = None
@@ -168,7 +179,10 @@ class SessionWindowExtractor:
         if idx_end - idx_start < self.wcfg.min_window_samples:
             return None
         window = vals[idx_start:idx_end]
-        return self.resample_window(window, self.wcfg.target_window_len)
+        out = self.resample_window(window, self.wcfg.target_window_len)
+        if self.use_diff_channels:
+            out = append_diff_channels(out)
+        return out
 
 
 def _pick_inception_kernels(n_timesteps: int) -> tuple[int, int, int]:
@@ -300,21 +314,31 @@ def train_final_inception(
     augment: bool = True,
     pre_ms: float = 100.0,
     post_ms: float = 200.0,
+    norm_mode: str = "global",
+    use_diff_channels: bool = False,
 ):
     if (not force) and os.path.exists(checkpoint_path) and os.path.exists(scaler_path):
         print(f"  Found saved model: {checkpoint_path}")
         return
 
     os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+    if use_diff_channels and X.shape[2] == 6:
+        X = append_diff_channels(X)
+
     n_timesteps = X.shape[1]
     n_channels = X.shape[2]
     n_classes = len(classes)
 
     ch_means = X.mean(axis=(0, 1))
     ch_stds = X.std(axis=(0, 1))
-    per_mean = X.mean(axis=1, keepdims=True)
-    per_std = X.std(axis=1, keepdims=True)
-    X_norm = (X - per_mean) / (per_std + 1e-6)
+    if norm_mode == "per_window":
+        per_mean = X.mean(axis=1, keepdims=True)
+        per_std = X.std(axis=1, keepdims=True)
+        X_norm = (X - per_mean) / (per_std + 1e-6)
+    else:
+        X_norm = X.copy()
+        for ch in range(n_channels):
+            X_norm[:, :, ch] = (X_norm[:, :, ch] - ch_means[ch]) / (ch_stds[ch] + 1e-10)
 
     indices = np.arange(len(X_norm))
     test_size = max(0.1, 1 / len(indices))
@@ -400,10 +424,11 @@ def train_final_inception(
         "n_classes": n_classes,
         "classes": classes,
         "model_name": "InceptionTime",
-        "norm_mode": "per_window",
+        "norm_mode": str(norm_mode),
         "pre_ms": float(pre_ms),
         "post_ms": float(post_ms),
         "target_rate_hz": 190.0,
+        "use_diff_channels": bool(use_diff_channels),
     }, checkpoint_path)
     np.savez(scaler_path, means=ch_means, stds=ch_stds)
     print(f"  Best val acc: {best_val:.3f} | Total time: {time.time()-t0:.1f}s")
@@ -427,6 +452,11 @@ def load_final_inception(checkpoint_path: str, scaler_path: str, device: torch.d
 def load_inception_norm_mode(checkpoint_path: str) -> str:
     ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     return str(ckpt.get("norm_mode", "global"))
+
+
+def load_inception_use_diff_channels(checkpoint_path: str) -> bool:
+    ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    return bool(ckpt.get("use_diff_channels", False))
 
 
 def discover_freetype_sessions(freetype_dirs: list[str]) -> list[str]:
@@ -458,10 +488,12 @@ def build_no_space_sequences(
     yes_only: bool = True,
     eval_max_sequences: int = 0,
     window_cfg: Optional[WindowConfig] = None,
+    use_diff_channels: bool = False,
 ) -> list[dict]:
     extractor = SessionWindowExtractor(
         session_prefix,
         window_cfg=window_cfg or WindowConfig(min_window_samples=2),
+        use_diff_channels=use_diff_channels,
     )
     attempts = read_attempt_rows(session_prefix)
     events_path = session_prefix + "_events.csv"
@@ -523,8 +555,11 @@ def infer_one(
     stds: np.ndarray,
     device: torch.device,
     norm_mode: str = "global",
+    use_diff_channels: bool = False,
 ) -> np.ndarray:
     w = window.copy().astype(np.float32)
+    if use_diff_channels and w.shape[1] * 2 == len(means):
+        w = append_diff_channels(w)
     if norm_mode == "per_window":
         per_mean = w.mean(axis=0, keepdims=True)
         per_std = w.std(axis=0, keepdims=True)
@@ -600,6 +635,7 @@ def evaluate_sequences(
     stds,
     device: torch.device,
     norm_mode: str = "global",
+    use_diff_channels: bool = False,
     char_topk: tuple[int, ...] = (1, 3, 5),
     seq_branch_topk: int = 5,
     seq_beam_width: int = 100,
@@ -624,7 +660,15 @@ def evaluate_sequences(
         prob_vectors = []
         topk_per_pos = []
         for item in seq["items"]:
-            probs = infer_one(model, item["window"], means, stds, device, norm_mode=norm_mode)
+            probs = infer_one(
+                model,
+                item["window"],
+                means,
+                stds,
+                device,
+                norm_mode=norm_mode,
+                use_diff_channels=use_diff_channels,
+            )
             prob_vectors.append(probs)
             ranked_idx = np.argsort(probs)[::-1]
             topk_per_pos.append([str(classes[int(i)]) for i in ranked_idx[: max(char_topk)]])
@@ -733,6 +777,8 @@ def parse_args():
                         help="Pre-trigger window in milliseconds for Stage3 extraction.")
     parser.add_argument("--post-ms", type=float, default=200.0,
                         help="Post-trigger window in milliseconds for Stage3 extraction.")
+    parser.add_argument("--norm-mode", choices=["global", "per_window"], default="global")
+    parser.add_argument("--use-diff-channels", action="store_true")
     parser.add_argument("--seq-branch-topk", type=int, default=5,
                         help="Per-position top-k used when expanding sequence candidates.")
     parser.add_argument("--seq-beam-width", type=int, default=100,
@@ -762,6 +808,8 @@ def main():
             augment=(not args.no_augment),
             pre_ms=args.pre_ms,
             post_ms=args.post_ms,
+            norm_mode=args.norm_mode,
+            use_diff_channels=args.use_diff_channels,
         )
     else:
         if not (os.path.exists(args.checkpoint_path) and os.path.exists(args.scaler_path)):
@@ -773,9 +821,10 @@ def main():
     ckpt_pre_ms = float(ckpt_meta.get("pre_ms", args.pre_ms))
     ckpt_post_ms = float(ckpt_meta.get("post_ms", args.post_ms))
     ckpt_norm_mode = str(ckpt_meta.get("norm_mode", "global"))
+    ckpt_use_diff_channels = bool(ckpt_meta.get("use_diff_channels", False))
     print(
         f"Loaded Inception model: n_classes={len(classes)}, n_timesteps={n_timesteps}, "
-        f"window=({ckpt_pre_ms:.1f}ms,{ckpt_post_ms:.1f}ms), norm={ckpt_norm_mode}"
+        f"window=({ckpt_pre_ms:.1f}ms,{ckpt_post_ms:.1f}ms), norm={ckpt_norm_mode}, diff={ckpt_use_diff_channels}"
     )
     print(f"Classifier classes: {' '.join(classes.tolist())}")
 
@@ -796,6 +845,7 @@ def main():
             yes_only=args.yes_only,
             eval_max_sequences=args.eval_max_sequences,
             window_cfg=eval_window_cfg,
+            use_diff_channels=ckpt_use_diff_channels,
         )
         print(f"  {os.path.basename(sess)} -> {len(seqs)} no-space sequences")
         sequences.extend(seqs)
@@ -814,6 +864,7 @@ def main():
         stds,
         device,
         norm_mode=ckpt_norm_mode,
+        use_diff_channels=ckpt_use_diff_channels,
         char_topk=(1, 3, 5),
         seq_branch_topk=args.seq_branch_topk,
         seq_beam_width=args.seq_beam_width,
@@ -845,6 +896,7 @@ def main():
             "checkpoint_path": args.checkpoint_path,
             "stage3_window_ms": {"pre_ms": ckpt_pre_ms, "post_ms": ckpt_post_ms},
             "norm_mode": ckpt_norm_mode,
+            "use_diff_channels": ckpt_use_diff_channels,
             "metrics": metrics,
             "examples": reports[:20],
         }, f, indent=2, ensure_ascii=False)

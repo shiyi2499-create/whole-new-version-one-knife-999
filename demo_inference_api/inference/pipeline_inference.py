@@ -185,6 +185,7 @@ def load_all_models(checkpoint_dir: str) -> dict:
     stage3_pre_ms = float(stage3_meta.get('pre_ms', 100.0))
     stage3_post_ms = float(stage3_meta.get('post_ms', 200.0))
     stage3_norm_mode = str(stage3_meta.get('norm_mode', 'global'))
+    stage3_use_diff_channels = bool(stage3_meta.get('use_diff_channels', False))
 
     ctc_model = _load_ctc_model(_resolve_ckpt_path(checkpoint_dir, manifest['ctc']), device)
 
@@ -204,6 +205,7 @@ def load_all_models(checkpoint_dir: str) -> dict:
         'stage3_pre_ms': stage3_pre_ms,
         'stage3_post_ms': stage3_post_ms,
         'stage3_norm_mode': stage3_norm_mode,
+        'stage3_use_diff_channels': stage3_use_diff_channels,
         'runtime_stage3_classifier': runtime_stage3_classifier,
         'ctc_model': ctc_model,
         'pipeline_defaults': manifest.get('pipeline_defaults', {}),
@@ -303,6 +305,7 @@ def run_pipeline_stage23(imu_segment: np.ndarray, models: dict, beam_width: int 
             pre_ms=float(models.get('stage3_pre_ms', 100.0)),
             post_ms=float(models.get('stage3_post_ms', 200.0)),
             norm_mode=str(models.get('stage3_norm_mode', 'global')),
+            use_diff_channels=bool(models.get('stage3_use_diff_channels', False)),
         )
         overlap = _run_stage3_overlap(
             models['overlap_model'],
@@ -319,6 +322,7 @@ def run_pipeline_stage23(imu_segment: np.ndarray, models: dict, beam_width: int 
             branch_topk=branch_topk,
             sequence_hit_cutoff=sequence_hit_cutoff,
             norm_mode=str(models.get('stage3_norm_mode', 'global')),
+            use_diff_channels=bool(models.get('stage3_use_diff_channels', False)),
         )
 
     chosen = overlap or fixed

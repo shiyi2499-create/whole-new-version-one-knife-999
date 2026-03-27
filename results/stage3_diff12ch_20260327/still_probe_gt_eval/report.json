@@ -1,0 +1,15 @@
+{
+  "n_samples": 5,
+  "stage3_window_ms": {
+    "pre_ms": 100.0,
+    "post_ms": 200.0
+  },
+  "stage3_norm_mode": "global",
+  "stage3_use_diff_channels": true,
+  "fixed_mean_cer": 0.23500000000000001,
+  "overlap_mean_cer": 0.23500000000000001,
+  "fixed_exact": 1,
+  "overlap_exact": 1,
+  "fixed_truth_in_top500": 5,
+  "overlap_truth_in_top500": 4
+}
