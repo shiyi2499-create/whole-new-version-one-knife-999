@@ -81,6 +81,21 @@ def _resolve_ckpt_path(checkpoint_dir: str, entry: dict[str, Any]) -> str:
     raise FileNotFoundError(f'Cannot resolve checkpoint path for entry: {entry}')
 
 
+def _coarse_merge_segments(segments: list[dict[str, Any]], max_gap_s: float, sr: float) -> list[dict[str, Any]]:
+    if len(segments) <= 1 or max_gap_s <= 0:
+        return list(segments)
+    max_gap_frames = int(round(float(max_gap_s) * float(sr)))
+    ordered = sorted((dict(seg) for seg in segments), key=lambda x: (int(x['start']), int(x['end'])))
+    merged = [ordered[0]]
+    for seg in ordered[1:]:
+        if int(seg['start']) - int(merged[-1]['end']) <= max_gap_frames:
+            merged[-1]['end'] = max(int(merged[-1]['end']), int(seg['end']))
+            merged[-1]['confidence'] = max(float(merged[-1].get('confidence', 0.0)), float(seg.get('confidence', 0.0)))
+        else:
+            merged.append(seg)
+    return merged
+
+
 def _load_stage1_model(path: str, device: torch.device, cfg: dict[str, Any]) -> UNet1D:
     model = UNet1D(
         in_channels=9,
@@ -212,10 +227,14 @@ def run_stage1(imu_array: np.ndarray, models: dict) -> list:
         valley_merge_threshold=float(params.get('valley_merge_threshold', 0.3)),
         valley_merge_max_gap=max(0, int(round(float(params.get('valley_merge_gap_s', 1.5)) * sr))),
     )
-    return [
+    out = [
         {'start': int(lo), 'end': int(hi), 'confidence': float(conf)}
         for lo, hi, conf in segs
     ]
+    coarse_merge_gap_s = float(models.get('pipeline_defaults', {}).get('stage1_coarse_merge_gap_s', 0.0) or 0.0)
+    if coarse_merge_gap_s > 0:
+        out = _coarse_merge_segments(out, max_gap_s=coarse_merge_gap_s, sr=sr)
+    return out
 
 
 def run_pipeline_stage23(imu_segment: np.ndarray, models: dict, beam_width: int = 500) -> dict:

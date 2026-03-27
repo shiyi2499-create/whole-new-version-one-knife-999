@@ -206,6 +206,19 @@ python3 preprocessor.py --rounds password/len_8 --session-type free_type --targe
 - `--xgb-jobs`：XGBoost/RandomForest 并行度
 - `--nondeterministic`：追求速度时关闭严格确定性
 
+## 5.1 Still-Password-Still Update (2026-03-27)
+
+- 我们已经确认：`still -> password -> still` 场景并不是“原路线完全不适配”。
+- 当前真正的大头问题是 Stage1 会把同一条 password burst 切碎 / 截短，导致 downstream 吃到错误片段。
+- 一个工程化 `coarse merge` 后处理已经明显缓解了这类灾难性错段：
+  - still probe auto CTC: `0.472 -> 0.347`
+  - fair6 local repro CER: `0.3034 -> 0.2697`
+- 在 suppress 了这类错段以后，remaining gap 更像是 Stage3 的邻近键 / 分辨率问题。
+- 这类 `coarse merge` 我们当前把它视为 **工程增强**，不是论文主方法。
+- 当前状态说明文档见：
+  - [`STILL_PASSWORD_STATUS_20260327.md`](/Users/shiyi/备份（mac_vs专用）/STILL_PASSWORD_STATUS_20260327.md)
+  - [`clean_password_eval/README.md`](/Users/shiyi/备份（mac_vs专用）/clean_password_eval/README.md)
+
 ## 6. 当前状态看板
 
 - 🟩【已完成】Step 1: 频率清洗与重采清单
