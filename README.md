@@ -8,6 +8,8 @@
 >   - [`onset_detection/stage2_gpt54/README.md`](/Users/shiyi/备份（mac_vs专用）/onset_detection/stage2_gpt54/README.md)
 >   - [`ONSET_CODEX_HANDOFF.md`](/Users/shiyi/备份（mac_vs专用）/ONSET_CODEX_HANDOFF.md)
 >   - [`PROJECT_HANDOFF_20260322.md`](/Users/shiyi/备份（mac_vs专用）/PROJECT_HANDOFF_20260322.md)
+> - 如果你想按时间线快速理解整个实验过程，请读：
+>   - [`EXPERIMENT_EVOLUTION_20260327.md`](/Users/shiyi/备份（mac_vs专用）/EXPERIMENT_EVOLUTION_20260327.md)
 >
 > 当前最关键的新结论：
 > - Stage 3 password classifier 已经成立，而且 `len8/9/10` 多长度版本也已站住。
