@@ -20,7 +20,7 @@ if str(REPO_ROOT / 'onset_detection') not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / 'onset_detection'))
 
 from inference.pipeline_inference import load_all_models
-from inference.preprocess import csv_to_array, estimate_sample_rate, extract_timestamps, resample_to_190hz
+from inference.preprocess import csv_to_array, estimate_sample_rate, extract_timestamps, resample_to_target_hz
 from onset_detection.stage2_segmental.scripts.eval_stage123_end_to_end_strongstage2 import (
     _run_stage3_fixed,
     _run_stage3_overlap,
@@ -118,14 +118,15 @@ def _result_block(res: dict[str, Any] | None, truth: str) -> dict[str, Any] | No
     }
 
 
-def _load_stage3_runtime_params(checkpoint_path: Path) -> tuple[float, float, int, str, bool]:
+def _load_stage3_runtime_params(checkpoint_path: Path) -> tuple[float, float, int, float, str, bool]:
     ckpt = torch.load(str(checkpoint_path), map_location='cpu', weights_only=False)
     pre_ms = float(ckpt.get('pre_ms', 100.0))
     post_ms = float(ckpt.get('post_ms', 200.0))
     target_len = int(ckpt['n_timesteps'])
+    target_hz = float(ckpt.get('target_rate_hz', 190.0))
     norm_mode = str(ckpt.get('norm_mode', 'global'))
     use_diff_channels = bool(ckpt.get('use_diff_channels', False))
-    return pre_ms, post_ms, target_len, norm_mode, use_diff_channels
+    return pre_ms, post_ms, target_len, target_hz, norm_mode, use_diff_channels
 
 
 def main() -> int:
@@ -158,18 +159,19 @@ def main() -> int:
         stage3_model, stage3_classes, stage3_means, stage3_stds = load_final_inception(str(stage3_checkpoint), str(stage3_scaler), models['device'])
         runtime_stage3_classifier = load_external_inception(str(stage3_checkpoint), str(stage3_scaler), models['device'])
         runtime_stage3_classifier.eval()
-        pre_ms, post_ms, target_len, norm_mode, use_diff_channels = _load_stage3_runtime_params(stage3_checkpoint)
+        pre_ms, post_ms, target_len, target_hz, norm_mode, use_diff_channels = _load_stage3_runtime_params(stage3_checkpoint)
         models['stage3_model'] = stage3_model
         models['stage3_classes'] = stage3_classes
         models['stage3_means'] = stage3_means
         models['stage3_stds'] = stage3_stds
         models['runtime_stage3_classifier'] = runtime_stage3_classifier
         models['stage3_target_len'] = target_len
+        models['stage3_target_hz'] = target_hz
         models['stage3_pre_ms'] = pre_ms
         models['stage3_post_ms'] = post_ms
         models['stage3_norm_mode'] = norm_mode
         models['stage3_use_diff_channels'] = use_diff_channels
-    sr = float(models['stage1_config'].get('sample_rate_hz', 190.0))
+    sr = float(models.get('stage3_target_hz', models['stage1_config'].get('sample_rate_hz', 190.0)))
     rows = []
 
     for proto_path in protocol_paths:
@@ -184,12 +186,12 @@ def main() -> int:
         timestamps = extract_timestamps(csv_string)
         imu = csv_to_array(csv_string)
         orig_hz = estimate_sample_rate(imu, timestamps)
-        imu190 = resample_to_190hz(imu, orig_hz)
+        imu_resampled = resample_to_target_hz(imu, orig_hz, sr)
 
         gt_frames_global = np.asarray([_ns_to_resampled_frame(timestamps, e['timestamp_ns'], target_hz=sr) for e in matched_presses], dtype=np.int64)
         crop_start = max(0, int(min(gt_frames_global) - round(args.pre_margin_sec * sr)))
-        crop_end = min(len(imu190), int(max(gt_frames_global) + round(args.post_margin_sec * sr)))
-        crop = imu190[crop_start:crop_end]
+        crop_end = min(len(imu_resampled), int(max(gt_frames_global) + round(args.post_margin_sec * sr)))
+        crop = imu_resampled[crop_start:crop_end]
         local_frames = gt_frames_global - crop_start
 
         fixed = _run_stage3_fixed(

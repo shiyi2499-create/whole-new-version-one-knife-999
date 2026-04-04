@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -11,7 +12,8 @@ import torch
 from scipy.signal import resample
 
 THIS_DIR = Path(__file__).resolve().parent
-REPO_ROOT = THIS_DIR.parent.parent
+RUNTIME_ROOT = Path(getattr(sys, '_MEIPASS', str(THIS_DIR.parent.parent))).resolve()
+REPO_ROOT = RUNTIME_ROOT if getattr(sys, 'frozen', False) else THIS_DIR.parent.parent
 for p in (REPO_ROOT, REPO_ROOT / 'onset_detection', REPO_ROOT / 'onset_detection' / 'stage2_ctc', REPO_ROOT / 'phase3_password_inception'):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
@@ -46,8 +48,17 @@ DEFAULT_STAGE1_CONFIG = {
 }
 
 
+def _debug_load(msg: str) -> None:
+    if os.environ.get('IMU_ATTACK_DEBUG_LOAD'):
+        print(f'[load_all_models] {msg}', file=sys.stderr, flush=True)
+
+
 def _resolve_device(device_name: str = 'auto') -> torch.device:
-    req = (device_name or 'auto').lower()
+    env_override = os.environ.get('IMU_ATTACK_DEVICE')
+    if env_override:
+        req = env_override.lower()
+    else:
+        req = (device_name or 'auto').lower()
     if req == 'auto':
         if torch.cuda.is_available():
             req = 'cuda'
@@ -60,9 +71,18 @@ def _resolve_device(device_name: str = 'auto') -> torch.device:
 
 def _load_manifest(checkpoint_dir: str) -> dict[str, Any]:
     checkpoint_root = Path(checkpoint_dir)
-    manifest_path = checkpoint_root / 'CHECKPOINT_MANIFEST.json'
-    if not manifest_path.exists():
-        manifest_path = THIS_DIR / 'checkpoints' / 'CHECKPOINT_MANIFEST.json'
+    manifest_candidates = [
+        checkpoint_root / 'CHECKPOINT_MANIFEST.json',
+        checkpoint_root / 'demo_inference_api' / 'inference' / 'checkpoints' / 'CHECKPOINT_MANIFEST.json',
+        THIS_DIR / 'checkpoints' / 'CHECKPOINT_MANIFEST.json',
+        REPO_ROOT / 'demo_inference_api' / 'inference' / 'checkpoints' / 'CHECKPOINT_MANIFEST.json',
+    ]
+    manifest_path = next((p for p in manifest_candidates if p.exists()), None)
+    if manifest_path is None:
+        raise FileNotFoundError(
+            'Could not locate CHECKPOINT_MANIFEST.json in any known runtime location: '
+            + ', '.join(str(p) for p in manifest_candidates)
+        )
     data = json.loads(manifest_path.read_text(encoding='utf-8'))
     data['_checkpoint_dir'] = str(checkpoint_root)
     return data
@@ -156,30 +176,75 @@ def _candidate_list(result: dict[str, Any] | None) -> list[dict[str, Any]]:
     ]
 
 
+def _choose_stage3_result(fixed: dict[str, Any] | None, overlap: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    info = {
+        'fixed_avg_log_prob': None if fixed is None else float(fixed.get('avg_log_prob', -1e9)),
+        'overlap_avg_log_prob': None if overlap is None else float(overlap.get('avg_log_prob', -1e9)),
+        'fixed_mean_margin': None if fixed is None else float(fixed.get('mean_margin', 0.0)),
+        'overlap_mean_margin': None if overlap is None else float(overlap.get('mean_margin', 0.0)),
+        'reason': None,
+    }
+    if fixed is None and overlap is None:
+        info['reason'] = 'no_stage3_result'
+        return None, info
+    if fixed is None:
+        info['reason'] = 'overlap_only'
+        return overlap, info
+    if overlap is None:
+        info['reason'] = 'fixed_only'
+        return fixed, info
+
+    fixed_score = float(fixed.get('avg_log_prob', -1e9))
+    overlap_score = float(overlap.get('avg_log_prob', -1e9))
+    if fixed_score > overlap_score:
+        info['reason'] = 'fixed_higher_avg_log_prob'
+        return fixed, info
+    if overlap_score > fixed_score:
+        info['reason'] = 'overlap_higher_avg_log_prob'
+        return overlap, info
+
+    fixed_margin = float(fixed.get('mean_margin', 0.0))
+    overlap_margin = float(overlap.get('mean_margin', 0.0))
+    if fixed_margin > overlap_margin:
+        info['reason'] = 'fixed_higher_mean_margin'
+        return fixed, info
+    info['reason'] = 'overlap_tie_break'
+    return overlap, info
+
+
 def load_all_models(checkpoint_dir: str) -> dict:
     """加载所有模型，返回 dict。"""
+    _debug_load(f'checkpoint_dir={checkpoint_dir}')
     manifest = _load_manifest(checkpoint_dir)
+    _debug_load('manifest_loaded')
     device = _resolve_device(manifest.get('runtime', {}).get('device', 'auto'))
+    _debug_load(f'device={device}')
 
     stage1_cfg = dict(DEFAULT_STAGE1_CONFIG)
     stage1_cfg.update(manifest.get('stage1', {}).get('model_config', {}))
     stage1_posthoc = manifest.get('stage1_posthoc', {}).get('params', {})
 
+    _debug_load('loading_stage1_model')
     stage1_model = _load_stage1_model(
         _resolve_ckpt_path(checkpoint_dir, manifest['stage1']),
         device,
         stage1_cfg,
     )
+    _debug_load('loading_keyness_rf')
     keyness_rf = joblib.load(_resolve_ckpt_path(checkpoint_dir, manifest['keyness_rf']))
+    _debug_load('loading_overlap_model')
     overlap_model = load_overlap_checkpoint(_resolve_ckpt_path(checkpoint_dir, manifest['overlap']), device)
     overlap_model.eval()
     overlap_model.freeze_classifier(True)
 
+    _debug_load('loading_stage3_model')
     stage3_ckpt = _resolve_ckpt_path(checkpoint_dir, manifest['stage3'])
     stage3_scaler = _resolve_ckpt_path(checkpoint_dir, manifest['stage3_scaler'])
     stage3_model, stage3_classes, stage3_means, stage3_stds = load_final_inception(stage3_ckpt, stage3_scaler, device)
+    _debug_load('loading_runtime_stage3_classifier')
     runtime_stage3_classifier = load_external_inception(stage3_ckpt, stage3_scaler, device)
     runtime_stage3_classifier.eval()
+    _debug_load('loading_stage3_meta')
     stage3_meta = torch.load(stage3_ckpt, map_location='cpu', weights_only=False)
     stage3_target_len = int(stage3_meta['n_timesteps'])
     stage3_pre_ms = float(stage3_meta.get('pre_ms', 100.0))
@@ -187,7 +252,9 @@ def load_all_models(checkpoint_dir: str) -> dict:
     stage3_norm_mode = str(stage3_meta.get('norm_mode', 'global'))
     stage3_use_diff_channels = bool(stage3_meta.get('use_diff_channels', False))
 
+    _debug_load('loading_ctc_model')
     ctc_model = _load_ctc_model(_resolve_ckpt_path(checkpoint_dir, manifest['ctc']), device)
+    _debug_load('load_complete')
 
     return {
         'device': device,
@@ -325,7 +392,7 @@ def run_pipeline_stage23(imu_segment: np.ndarray, models: dict, beam_width: int 
             use_diff_channels=bool(models.get('stage3_use_diff_channels', False)),
         )
 
-    chosen = overlap or fixed
+    chosen, selection_debug = _choose_stage3_result(fixed, overlap)
     if chosen is None:
         return {
             'num_keys': 0,
@@ -334,6 +401,7 @@ def run_pipeline_stage23(imu_segment: np.ndarray, models: dict, beam_width: int 
             'selected_frames': [],
             'mode_used': None,
             'anchor_debug': anchor_debug,
+            'selection_debug': selection_debug,
         }
 
     out = {
@@ -346,6 +414,7 @@ def run_pipeline_stage23(imu_segment: np.ndarray, models: dict, beam_width: int 
         'candidate_score': candidate_score,
         'fixed_prediction': None if fixed is None else str(fixed.get('prediction', '')),
         'overlap_prediction': None if overlap is None else str(overlap.get('prediction', '')),
+        'selection_debug': selection_debug,
     }
     return out
 
