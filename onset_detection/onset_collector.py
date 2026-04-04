@@ -75,6 +75,7 @@ from keyboard_listener import KeyboardListener, KeyEvent
 ACTIVITIES = [
     "idle",
     "trackpad_move",
+    "trackpad_use",
     "trackpad_click",
     "shake",
     "desk_bump",
@@ -205,6 +206,8 @@ def run_negative_mode(
     participant: str = "p01",
     gate_rate_hz: float = 150.0,
     precheck_sec: float = 3.0,
+    spu_report_interval_us: int = 5000,
+    spu_device_rate_control: bool = False,
 ):
     """Record a single-activity negative session."""
     assert activity in NEGATIVE_ACTIVITIES, f"Unknown activity: {activity}"
@@ -218,7 +221,10 @@ def run_negative_mode(
     meta_path = os.path.join(out_dir, f"{session_id}_meta.json")
     events_path = os.path.join(out_dir, f"{session_id}_events.csv")
 
-    sensor = SensorReader()
+    sensor = SensorReader(
+        spu_report_interval_us=spu_report_interval_us,
+        spu_device_rate_control=spu_device_rate_control,
+    )
     sensor.start()
     keyboard = None
     ef = None
@@ -312,6 +318,9 @@ def run_negative_mode(
         "sample_count": sample_count,
         "avg_rate_hz": rate,
         "participant": participant,
+        "spu_report_interval_us": int(spu_report_interval_us),
+        "spu_device_rate_control": bool(spu_device_rate_control),
+        "sensor_backend": sensor.backend_name,
     }
     if activity == "freetyping":
         meta["event_count"] = event_count
@@ -707,6 +716,8 @@ def run_structured_mode(
     mode_tag: str = "mixed2",
     duration_jitter_pct: float = 0.0,
     password_length: int = 8,
+    spu_report_interval_us: int = 5000,
+    spu_device_rate_control: bool = False,
 ):
     """
     Record the structured ~3-minute mixed-stream protocol.
@@ -720,7 +731,10 @@ def run_structured_mode(
     os.makedirs(output_dir, exist_ok=True)
     tag = timestamp_tag()
 
-    sensor = SensorReader()
+    sensor = SensorReader(
+        spu_report_interval_us=int(spu_report_interval_us),
+        spu_device_rate_control=bool(spu_device_rate_control),
+    )
     keyboard = KeyboardListener()
     sensor.start()
     keyboard.start()
@@ -735,6 +749,8 @@ def run_structured_mode(
     print(f"  每轮密码数：{n_passwords}")
     print(f"  时长抖动：  ±{duration_jitter_pct * 100:.0f}%")
     print(f"  输出目录：  {output_dir}")
+    print(f"  SPU间隔：   {int(spu_report_interval_us)} us")
+    print(f"  Device ctl: {bool(spu_device_rate_control)}")
     print(f"{'='*60}\n")
 
     print("  传感器预热中（3 秒）...")
@@ -896,7 +912,13 @@ def run_structured_mode(
                 "trial_idx": trial_idx,
                 "participant": participant,
                 "mode": mode_tag,
+                "n_trials": int(n_trials),
+                "n_passwords": int(n_passwords),
                 "duration_jitter_pct": duration_jitter_pct,
+                "password_length": int(password_length),
+                "output_dir": os.path.abspath(output_dir),
+                "spu_report_interval_us": int(spu_report_interval_us),
+                "spu_device_rate_control": bool(spu_device_rate_control),
                 "protocol": protocol,
                 "sample_count": sample_count,
                 "event_count": event_count,
@@ -918,11 +940,17 @@ def run_custom_structured_mode(
     mode_tag: str,
     duration_jitter_pct: float,
     protocol_generator,
+    password_length: int = 8,
+    spu_report_interval_us: int = 5000,
+    spu_device_rate_control: bool = False,
 ):
     os.makedirs(output_dir, exist_ok=True)
     tag = timestamp_tag()
 
-    sensor = SensorReader()
+    sensor = SensorReader(
+        spu_report_interval_us=int(spu_report_interval_us),
+        spu_device_rate_control=bool(spu_device_rate_control),
+    )
     keyboard = KeyboardListener()
     sensor.start()
     keyboard.start()
@@ -932,6 +960,8 @@ def run_custom_structured_mode(
     print(f"  轮数：      {n_trials}")
     print(f"  时长抖动：  ±{duration_jitter_pct * 100:.0f}%")
     print(f"  输出目录：  {output_dir}")
+    print(f"  SPU间隔：   {int(spu_report_interval_us)} us")
+    print(f"  Device ctl: {bool(spu_device_rate_control)}")
     print(f"{'='*60}\n")
 
     print("  传感器预热中（3 秒）...")
@@ -1094,7 +1124,12 @@ def run_custom_structured_mode(
                 "trial_idx": trial_idx,
                 "participant": participant,
                 "mode": mode_tag,
+                "n_trials": int(n_trials),
                 "duration_jitter_pct": duration_jitter_pct,
+                "password_length": int(password_length),
+                "output_dir": os.path.abspath(output_dir),
+                "spu_report_interval_us": int(spu_report_interval_us),
+                "spu_device_rate_control": bool(spu_device_rate_control),
                 "protocol": protocol,
                 "sample_count": sample_count,
                 "event_count": event_count,
@@ -1115,6 +1150,8 @@ def run_mixed2_mode(
     participant: str = "p01",
     seed: int = 42,
     password_length: int = 8,
+    spu_report_interval_us: int = 5000,
+    spu_device_rate_control: bool = False,
 ):
     return run_structured_mode(
         n_trials=n_trials,
@@ -1125,6 +1162,8 @@ def run_mixed2_mode(
         mode_tag="mixed2",
         duration_jitter_pct=0.0,
         password_length=password_length,
+        spu_report_interval_us=spu_report_interval_us,
+        spu_device_rate_control=spu_device_rate_control,
     )
 
 
@@ -1136,6 +1175,8 @@ def run_mixed_training_mode(
     seed: int = 42,
     duration_jitter_pct: float = DEFAULT_MIXED_TRAINING_JITTER_PCT,
     password_length: int = 8,
+    spu_report_interval_us: int = 5000,
+    spu_device_rate_control: bool = False,
 ):
     return run_structured_mode(
         n_trials=n_trials,
@@ -1146,6 +1187,8 @@ def run_mixed_training_mode(
         mode_tag="mixed_training",
         duration_jitter_pct=duration_jitter_pct,
         password_length=password_length,
+        spu_report_interval_us=spu_report_interval_us,
+        spu_device_rate_control=spu_device_rate_control,
     )
 
 
@@ -1156,6 +1199,8 @@ def run_mixed_single_training_mode(
     seed: int = 42,
     duration_jitter_pct: float = DEFAULT_MIXED_TRAINING_JITTER_PCT,
     password_length: int = 8,
+    spu_report_interval_us: int = 5000,
+    spu_device_rate_control: bool = False,
 ):
     return run_custom_structured_mode(
         n_trials=n_trials,
@@ -1167,6 +1212,9 @@ def run_mixed_single_training_mode(
         protocol_generator=lambda **kwargs: generate_single_password_protocol(
             password_length=password_length, **kwargs
         ),
+        password_length=password_length,
+        spu_report_interval_us=spu_report_interval_us,
+        spu_device_rate_control=spu_device_rate_control,
     )
 
 
@@ -1177,6 +1225,8 @@ def run_mixed_retry_training_mode(
     seed: int = 42,
     duration_jitter_pct: float = DEFAULT_MIXED_TRAINING_JITTER_PCT,
     password_length: int = 8,
+    spu_report_interval_us: int = 5000,
+    spu_device_rate_control: bool = False,
 ):
     return run_custom_structured_mode(
         n_trials=n_trials,
@@ -1188,6 +1238,9 @@ def run_mixed_retry_training_mode(
         protocol_generator=lambda **kwargs: generate_retry_password_protocol(
             password_length=password_length, **kwargs
         ),
+        password_length=password_length,
+        spu_report_interval_us=spu_report_interval_us,
+        spu_device_rate_control=spu_device_rate_control,
     )
 
 
@@ -1284,6 +1337,10 @@ def main():
     parser.add_argument("--participant", default="p01")
     parser.add_argument("--seed", type=int, default=None,
                         help="Base random seed. If omitted, a fresh seed is generated per run.")
+    parser.add_argument("--spu-report-interval-us", type=int, default=5000,
+                        help="Direct SPU ReportInterval in microseconds (use 1250 for ~800Hz).")
+    parser.add_argument("--spu-device-rate-control", action="store_true",
+                        help="Also set ReportInterval on opened IOHIDDeviceRef. Required for non-root ~800Hz.")
     args = parser.parse_args()
 
     if args.seed is None:
@@ -1300,6 +1357,8 @@ def main():
             duration_sec=args.duration,
             output_dir=out_dir,
             participant=args.participant,
+            spu_report_interval_us=args.spu_report_interval_us,
+            spu_device_rate_control=args.spu_device_rate_control,
         )
     elif args.mode == "mixed":
         out_dir = args.output_dir or "data/raw/onset_mixed"
@@ -1327,6 +1386,8 @@ def main():
             participant=args.participant,
             seed=args.seed,
             password_length=args.password_length,
+            spu_report_interval_us=args.spu_report_interval_us,
+            spu_device_rate_control=args.spu_device_rate_control,
         )
     elif args.mode == "mixed_training":
         out_dir = args.output_dir or "data/raw/mixed_training"
@@ -1345,6 +1406,8 @@ def main():
             seed=args.seed,
             duration_jitter_pct=jitter,
             password_length=args.password_length,
+            spu_report_interval_us=args.spu_report_interval_us,
+            spu_device_rate_control=args.spu_device_rate_control,
         )
     elif args.mode == "mixed_single_training":
         if args.output_dir:
@@ -1367,6 +1430,8 @@ def main():
             seed=args.seed,
             duration_jitter_pct=jitter,
             password_length=args.password_length,
+            spu_report_interval_us=args.spu_report_interval_us,
+            spu_device_rate_control=args.spu_device_rate_control,
         )
     elif args.mode == "mixed_retry_training":
         if args.output_dir:
@@ -1389,6 +1454,8 @@ def main():
             seed=args.seed,
             duration_jitter_pct=jitter,
             password_length=args.password_length,
+            spu_report_interval_us=args.spu_report_interval_us,
+            spu_device_rate_control=args.spu_device_rate_control,
         )
 
 

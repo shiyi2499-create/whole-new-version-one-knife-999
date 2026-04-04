@@ -717,6 +717,44 @@ def compute_key_recall(pred_start: int, pred_end: int, key_frames: np.ndarray) -
     return float(inside) / float(len(key_frames))
 
 
+def _infer_probs_chunked(
+    model: nn.Module,
+    features: np.ndarray,
+    device: torch.device,
+    chunk_len: int = 0,
+    chunk_overlap: int = 0,
+) -> np.ndarray:
+    total_len = int(features.shape[1])
+    if chunk_len <= 0 or total_len <= chunk_len:
+        x = torch.from_numpy(features).float().unsqueeze(0).to(device)
+        logits = model(x)
+        return torch.sigmoid(logits).squeeze().detach().cpu().numpy()
+
+    chunk_len = int(max(16, chunk_len))
+    chunk_overlap = int(max(0, min(chunk_overlap, chunk_len - 1)))
+    step = max(1, chunk_len - chunk_overlap)
+
+    prob_sum = np.zeros(total_len, dtype=np.float64)
+    prob_count = np.zeros(total_len, dtype=np.float64)
+    starts = list(range(0, total_len, step))
+    if starts and starts[-1] + chunk_len < total_len:
+        starts.append(max(0, total_len - chunk_len))
+
+    for start in starts:
+        end = min(total_len, start + chunk_len)
+        chunk = features[:, start:end]
+        x = torch.from_numpy(chunk).float().unsqueeze(0).to(device)
+        logits = model(x)
+        probs = torch.sigmoid(logits).squeeze().detach().cpu().numpy()
+        probs = np.asarray(probs, dtype=np.float64)
+        valid = min(len(probs), end - start)
+        prob_sum[start:start + valid] += probs[:valid]
+        prob_count[start:start + valid] += 1.0
+
+    prob_count = np.maximum(prob_count, 1.0)
+    return (prob_sum / prob_count).astype(np.float32)
+
+
 def _best_match_for_gt(
     pred_segments: list[tuple[int, int, float]],
     gt: SegmentGT,
@@ -743,6 +781,8 @@ def evaluate_dense_labeling(
     prob_smooth_window: int = 1,
     valley_merge_threshold: float = 0.0,
     valley_merge_max_gap_frames: int = 0,
+    eval_chunk_len: int = 0,
+    eval_chunk_overlap: int = 0,
 ) -> tuple[dict, list[dict]]:
     model.eval()
     details: list[dict] = []
@@ -756,9 +796,13 @@ def evaluate_dense_labeling(
 
     with torch.no_grad():
         for rec in records:
-            x = torch.from_numpy(rec.features).float().unsqueeze(0).to(device)
-            logits = model(x)
-            probs = torch.sigmoid(logits).squeeze().detach().cpu().numpy()
+            probs = _infer_probs_chunked(
+                model,
+                rec.features,
+                device,
+                chunk_len=eval_chunk_len,
+                chunk_overlap=eval_chunk_overlap,
+            )
             pred_segments = extract_segments(
                 probs,
                 threshold=threshold,
@@ -848,6 +892,8 @@ def evaluate_posthoc_grid(
     prob_smooth_windows: list[int],
     valley_merge_thresholds: list[float],
     valley_merge_gap_seconds: list[float],
+    eval_chunk_len: int = 0,
+    eval_chunk_overlap: int = 0,
 ) -> tuple[dict, list[dict], dict]:
     if not records:
         empty = {
@@ -877,6 +923,8 @@ def evaluate_posthoc_grid(
                                 prob_smooth_window=int(smooth_w),
                                 valley_merge_threshold=float(valley_thr),
                                 valley_merge_max_gap_frames=int(round(float(valley_gap_s) * median_sr)),
+                                eval_chunk_len=eval_chunk_len,
+                                eval_chunk_overlap=eval_chunk_overlap,
                             )
                             single = report["single_session_top1"]
                             oracle = report["all_gt_oracle"]
@@ -946,6 +994,8 @@ def _save_eval_preview(
     valley_merge_threshold: float = 0.0,
     valley_merge_max_gap_frames: int = 0,
     limit: int = 5,
+    eval_chunk_len: int = 0,
+    eval_chunk_overlap: int = 0,
 ) -> None:
     try:
         import matplotlib
@@ -961,8 +1011,13 @@ def _save_eval_preview(
     vis_dir.mkdir(parents=True, exist_ok=True)
     with torch.no_grad():
         for rec in records[:limit]:
-            x = torch.from_numpy(rec.features).float().unsqueeze(0).to(device)
-            probs = torch.sigmoid(model(x)).squeeze().cpu().numpy()
+            probs = _infer_probs_chunked(
+                model,
+                rec.features,
+                device,
+                chunk_len=eval_chunk_len,
+                chunk_overlap=eval_chunk_overlap,
+            )
             preds = extract_segments(
                 probs,
                 threshold,
@@ -1117,6 +1172,8 @@ def train(args) -> None:
             threshold=args.threshold,
             min_segment_frames=min_segment_frames,
             merge_gap_frames=merge_gap_frames,
+            eval_chunk_len=args.eval_chunk_len,
+            eval_chunk_overlap=args.eval_chunk_overlap,
         )
         single = report["single_session_top1"]
         oracle = report["all_gt_oracle"]
@@ -1144,6 +1201,8 @@ def train(args) -> None:
                 prob_smooth_windows=sweep_prob_smooth_windows,
                 valley_merge_thresholds=sweep_valley_thresholds,
                 valley_merge_gap_seconds=sweep_valley_gap_seconds,
+                eval_chunk_len=args.eval_chunk_len,
+                eval_chunk_overlap=args.eval_chunk_overlap,
             )
             sweep_rep = sweep_best["report"]
             sweep_single = sweep_rep["single_session_top1"]
@@ -1205,6 +1264,8 @@ def train(args) -> None:
                 prob_smooth_window=int(sweep_best["prob_smooth_window"]) if sweep_best is not None else 1,
                 valley_merge_threshold=float(sweep_best["valley_merge_threshold"]) if sweep_best is not None else 0.0,
                 valley_merge_max_gap_frames=int(round(float(sweep_best["valley_merge_gap_s"]) * np.median([r.sample_rate_hz for r in eval_records]))) if sweep_best is not None else 0,
+                eval_chunk_len=args.eval_chunk_len,
+                eval_chunk_overlap=args.eval_chunk_overlap,
             )
 
     with open(output_dir / "training_history.json", "w") as f:
@@ -1293,6 +1354,8 @@ def parse_args():
     ap.add_argument("--sweep_prob_smooth_windows", nargs="+", type=int, default=[1, 161])
     ap.add_argument("--sweep_valley_merge_thresholds", nargs="+", type=float, default=[0.0, 0.15, 0.25, 0.30])
     ap.add_argument("--sweep_valley_merge_gap_s", nargs="+", type=float, default=[0.0, 1.5, 2.0, 2.5, 3.0])
+    ap.add_argument("--eval_chunk_len", type=int, default=16384)
+    ap.add_argument("--eval_chunk_overlap", type=int, default=2048)
     return ap.parse_args()
 
 
